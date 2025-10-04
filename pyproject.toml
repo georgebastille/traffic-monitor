@@ -1,0 +1,40 @@
+[project]
+name = "traffic-monitor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+# --- Ruff (formatter + linter) ---
+[tool.ruff]
+line-length = 88          # Black's default
+target-version = "py313"
+# If you use a src/ layout, keep this so Ruff/Isort know what's "first-party":
+src = ["src", "."]
+
+[tool.ruff.format]
+# Keep defaults Black-like; tweak if you want:
+indent-style = "space"
+skip-magic-trailing-comma = false
+quote-style = "double"
+
+[tool.ruff.lint]
+# Enable core errors/warnings plus import sorting ("I")
+select = ["E", "F", "W", "I"]
+# Uncomment to add more rulesets later:
+# extend-select = ["B", "UP"]
+
+# (Optional) If your package lives under "src/your_package", tell import sorter:
+[tool.ruff.lint.isort]
+known-first-party = ["your_package"]
+combine-as-imports = true
+
+# --- Ty (type checker) ---
+[tool.ty.environment]
+# Set your target Python version for type analysis:
+python-version = "3.13"
+# If you use a virtualenv in the project, Ty will find it automatically;
+# otherwise you can point at it explicitly:
+# python = ".venv"
+
