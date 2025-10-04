@@ -11,3 +11,4 @@ wheels/
 .env
 traffic_report.jsonl
 cron.log
+traffic_report.png

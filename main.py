@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 
 import googlemaps
+import pandas as pd
 from dotenv import load_dotenv
 
 
@@ -37,6 +38,22 @@ class TrafficMonitor:
         }
 
 
+def plot_to_png(jsonl_filename: str, output_png: str):
+    df = pd.read_json(jsonl_filename, lines=True)
+    df["query_time"] = pd.to_datetime(df["query_time"])
+    df = df.set_index("query_time")
+    ax = df[["clear_duration_mins", "traffic_duration_mins"]].plot(
+        title="Traffic Duration Over Time",
+        ylabel="Duration (minutes)",
+        xlabel="Time",
+        figsize=(10, 6),
+    )
+    ax.grid(True)
+    fig = ax.get_figure()
+    fig.savefig(output_png)
+    print(f"Saved plot to {output_png}")
+
+
 def main():
     load_dotenv()  # take environment variables
     google_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -51,6 +68,7 @@ def main():
     with open(output_filenme, "a") as f:
         f.write(f"{json.dumps(traff)}\n")
     print(f"Appended traffic data to {output_filenme}")
+    plot_to_png(output_filenme, "traffic_report.png")
 
 
 if __name__ == "__main__":

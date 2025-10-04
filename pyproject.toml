@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "googlemaps>=4.10.0",
+    "matplotlib>=3.10.6",
+    "pandas>=2.3.3",
     "python-dotenv>=1.1.1",
 ]
 
