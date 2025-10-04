@@ -8,3 +8,5 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+traffic_report.jsonl

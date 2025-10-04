@@ -11,7 +11,7 @@ dependencies = [
 
 # --- Ruff (formatter + linter) ---
 [tool.ruff]
-line-length = 88          # Black's default
+line-length = 120          # Black's default
 target-version = "py313"
 # If you use a src/ layout, keep this so Ruff/Isort know what's "first-party":
 src = ["src", "."]
