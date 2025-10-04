@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "googlemaps>=4.10.0",
+    "python-dotenv>=1.1.1",
+]
 
 # --- Ruff (formatter + linter) ---
 [tool.ruff]
@@ -34,6 +37,12 @@ combine-as-imports = true
 [tool.ty.environment]
 # Set your target Python version for type analysis:
 python-version = "3.13"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.13.3",
+    "ty>=0.0.1a21",
+]
 # If you use a virtualenv in the project, Ty will find it automatically;
 # otherwise you can point at it explicitly:
 # python = ".venv"
