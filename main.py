@@ -3,6 +3,8 @@ import os
 from datetime import datetime
 
 import googlemaps
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -54,6 +56,66 @@ def plot_to_png(jsonl_filename: str, output_png: str):
     print(f"Saved plot to {output_png}")
 
 
+def plot_anomaly_to_png(jsonl_filename: str, output_png: str):
+    df = pd.read_json(jsonl_filename, lines=True)
+    # --- Parse & features ---
+    df["query_time"] = pd.to_datetime(df["query_time"])
+    df["date"] = df["query_time"].dt.date
+    df["dow"] = df["query_time"].dt.dayofweek  # 0=Mon ... 6=Sun
+    df["time_bucket"] = df["query_time"].dt.floor("5min")
+    df["time_of_day"] = df["time_bucket"].dt.time
+
+    today = df["date"].max()
+
+    # --- Build WEEKDAY baseline (Mon–Fri), from all past data (optional: exclude today) ---
+    weekday_mask = df["dow"] < 5
+    history_mask = df["date"] < today  # keep this to avoid peeking at today
+    baseline_df = (
+        df[weekday_mask & history_mask]
+        .groupby("time_of_day")["traffic_duration_mins"]
+        .agg(mean="mean", std="std", count="count")
+        .reset_index()
+    )
+
+    # If std is NaN (single sample), set to 0
+    baseline_df["std"] = baseline_df["std"].fillna(0.0)
+
+    # --- Today’s series (bucket to 5-min to align) ---
+    today_df = (
+        df[df["date"] == today]
+        .assign(time_of_day=lambda x: x["query_time"].dt.floor("5min").dt.time)
+        .sort_values("query_time")
+        .copy()
+    )
+
+    # --- Merge today with baseline ---
+    merged = today_df.merge(baseline_df, on="time_of_day", how="left")
+
+    # Helpful deviation columns
+    merged["pct_dev"] = 100 * (merged["traffic_duration_mins"] - merged["mean"]) / merged["mean"]
+    merged["z"] = (merged["traffic_duration_mins"] - merged["mean"]) / merged["std"].replace(0, np.nan)
+
+    # --- Plot: today vs weekday baseline ±1σ ---
+    plt.figure(figsize=(11, 5))
+    plt.plot(merged["query_time"], merged["traffic_duration_mins"], label="today (mins)")
+
+    # Baseline mean line (aligned to today's timestamps for clean overlay)
+    plt.plot(merged["query_time"], merged["mean"], linestyle="--", label="weekday baseline mean")
+
+    # Shaded ±1σ band (only where baseline exists)
+    lower = merged["mean"] - merged["std"]
+    upper = merged["mean"] + merged["std"]
+    plt.fill_between(merged["query_time"], lower, upper, alpha=0.2, label="weekday ±1σ")
+
+    plt.title(f"Route time vs WEEKDAY baseline (ignores Sat/Sun) — {today}")
+    plt.xlabel("time of day")
+    plt.ylabel("minutes")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_png, dpi=200, bbox_inches="tight")
+
+
 def main():
     load_dotenv()  # take environment variables
     google_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -64,11 +126,12 @@ def main():
     )
 
     output_jsonl_filename = "traffic_report.jsonl"
-    # append this result to the file, which will be creart4d if it doesn't exist
+
     with open(output_jsonl_filename, "a") as f:
         f.write(f"{json.dumps(response)}\n")
     print(f"Appended traffic data to {output_jsonl_filename}")
-    plot_to_png(output_jsonl_filename, "traffic_report.png")
+    # plot_to_png(output_jsonl_filename, "traffic_report.png")
+    plot_anomaly_to_png(output_jsonl_filename, "traffic_report_anomaly.png")
 
 
 if __name__ == "__main__":
