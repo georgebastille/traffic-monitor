@@ -58,17 +58,17 @@ def main():
     load_dotenv()  # take environment variables
     google_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     traffic_monitor = TrafficMonitor(api_key=google_api_key)
-    traff = traffic_monitor.get_traffic_data(
+    response = traffic_monitor.get_traffic_data(
         "164 Devonshire Road, London SE23 3SZ",
         "Rosemead Preparatory School, 70 Thurlow Park Road, London SE21 8HZ",
     )
 
-    output_filenme = "traffic_report.jsonl"
+    output_jsonl_filename = "traffic_report.jsonl"
     # append this result to the file, which will be creart4d if it doesn't exist
-    with open(output_filenme, "a") as f:
-        f.write(f"{json.dumps(traff)}\n")
-    print(f"Appended traffic data to {output_filenme}")
-    plot_to_png(output_filenme, "traffic_report.png")
+    with open(output_jsonl_filename, "a") as f:
+        f.write(f"{json.dumps(response)}\n")
+    print(f"Appended traffic data to {output_jsonl_filename}")
+    plot_to_png(output_jsonl_filename, "traffic_report.png")
 
 
 if __name__ == "__main__":
