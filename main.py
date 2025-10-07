@@ -4,9 +4,9 @@ from datetime import datetime
 
 import googlemaps
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
+from matplotlib.dates import DateFormatter, HourLocator
 
 
 class TrafficMonitor:
@@ -58,6 +58,7 @@ def plot_to_png(jsonl_filename: str, output_png: str):
 
 def plot_anomaly_to_png(jsonl_filename: str, output_png: str):
     df = pd.read_json(jsonl_filename, lines=True)
+
     # --- Parse & features ---
     df["query_time"] = pd.to_datetime(df["query_time"])
     df["date"] = df["query_time"].dt.date
@@ -66,53 +67,73 @@ def plot_anomaly_to_png(jsonl_filename: str, output_png: str):
     df["time_of_day"] = df["time_bucket"].dt.time
 
     today = df["date"].max()
+    dow_name = pd.to_datetime(today).strftime("%A")
 
-    # --- Build WEEKDAY baseline (Mon–Fri), from all past data (optional: exclude today) ---
+    # Build a fixed midnight→midnight x-axis for today (5-min buckets)
+    midnight = pd.Timestamp(today)
+    end_of_day = midnight + pd.Timedelta(days=1)
+    timeline = pd.date_range(midnight, end_of_day, freq="5min", inclusive="left")
+
+    # --- Build WEEKDAY baseline (Mon–Fri), from all past data (exclude today) ---
     weekday_mask = df["dow"] < 5
-    history_mask = df["date"] < today  # keep this to avoid peeking at today
+    history_mask = df["date"] < today  # avoid peeking at today
     baseline_df = (
         df[weekday_mask & history_mask]
         .groupby("time_of_day")["traffic_duration_mins"]
         .agg(mean="mean", std="std", count="count")
         .reset_index()
     )
-
-    # If std is NaN (single sample), set to 0
     baseline_df["std"] = baseline_df["std"].fillna(0.0)
 
-    # --- Today’s series (bucket to 5-min to align) ---
+    # Expand baseline to the full day timeline by matching on time-of-day
+    baseline_map = baseline_df.set_index("time_of_day")
+    tod_series = pd.Series([ts.time() for ts in timeline], index=timeline, name="time_of_day")
+    baseline_mean = tod_series.map(baseline_map["mean"])
+    baseline_std = tod_series.map(baseline_map["std"]).fillna(0.0)
+
+    # --- Today’s series, aligned to 5-min buckets ---
     today_df = (
         df[df["date"] == today]
-        .assign(time_of_day=lambda x: x["query_time"].dt.floor("5min").dt.time)
+        .assign(bucket=lambda x: x["query_time"].dt.floor("5min"))
         .sort_values("query_time")
         .copy()
     )
 
-    # --- Merge today with baseline ---
-    merged = today_df.merge(baseline_df, on="time_of_day", how="left")
+    # If there are multiple samples in a bucket, average them
+    today_series = (
+        today_df.groupby("bucket")["traffic_duration_mins"]
+        .mean()
+        .reindex(timeline)  # align to full-day axis (NaN where no data yet)
+    )
 
-    # Helpful deviation columns
-    merged["pct_dev"] = 100 * (merged["traffic_duration_mins"] - merged["mean"]) / merged["mean"]
-    merged["z"] = (merged["traffic_duration_mins"] - merged["mean"]) / merged["std"].replace(0, np.nan)
-
-    # --- Plot: today vs weekday baseline ±1σ ---
+    # --- Plot: baseline runs midnight→midnight; today shows only available data ---
     plt.figure(figsize=(11, 5))
-    plt.plot(merged["query_time"], merged["traffic_duration_mins"], label="today (mins)")
 
-    # Baseline mean line (aligned to today's timestamps for clean overlay)
-    plt.plot(merged["query_time"], merged["mean"], linestyle="--", label="weekday baseline mean")
+    # Today line (will naturally stop at the latest timestamp we have)
+    plt.plot(timeline, today_series, label="today (mins)")
 
-    # Shaded ±1σ band (only where baseline exists)
-    lower = merged["mean"] - merged["std"]
-    upper = merged["mean"] + merged["std"]
-    plt.fill_between(merged["query_time"], lower, upper, alpha=0.2, label="weekday ±1σ")
+    # Baseline mean line (full-day)
+    plt.plot(timeline, baseline_mean, linestyle="--", label="weekday baseline mean")
 
-    plt.title(f"Route time vs WEEKDAY baseline (ignores Sat/Sun) — {today}")
+    # Shaded ±1σ band across the full day (gaps where baseline missing)
+    lower = baseline_mean - baseline_std
+    upper = baseline_mean + baseline_std
+    plt.fill_between(timeline, lower, upper, alpha=0.2, label="weekday ±1σ")
+
+    # --- Formatting: x-axis is strictly today's time, midnight→midnight, time labels only ---
+    plt.xlim(midnight, end_of_day)
+    plt.gca().xaxis.set_major_locator(HourLocator(byhour=range(0, 24, 2)))  # every 2 hours
+    plt.gca().xaxis.set_major_formatter(DateFormatter("%H:%M"))
+
+    plt.title(f"Travel time for {dow_name}")
     plt.xlabel("time of day")
     plt.ylabel("minutes")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
+    plt.show()
+    plt.tight_layout()
+
     plt.savefig(output_png, dpi=200, bbox_inches="tight")
 
 
