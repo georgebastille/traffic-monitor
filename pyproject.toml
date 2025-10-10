@@ -45,8 +45,11 @@ python-version = "3.13"
 dev = [
     "ruff>=0.13.3",
     "ty>=0.0.1a21",
+    "pytest>=8.3.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
 # If you use a virtualenv in the project, Ty will find it automatically;
 # otherwise you can point at it explicitly:
 # python = ".venv"
-
