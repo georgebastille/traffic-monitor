@@ -30,7 +30,7 @@ class TrafficMonitor:
             destination,
             mode="driving",
             departure_time=departure_time,
-            traffic_model="pessimistic",
+            traffic_model="best_guess",
         )
         origin_address = directions_result["origin_addresses"][0]
         destination_address = directions_result["destination_addresses"][0]
