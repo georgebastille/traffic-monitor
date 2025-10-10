@@ -1,6 +1,7 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import googlemaps
 import matplotlib.pyplot as plt
@@ -17,13 +18,18 @@ class TrafficMonitor:
     def __init__(self, api_key: str):
         self.gmaps = googlemaps.Client(key=api_key)
 
-    def get_traffic_data(self, origin: str, destination: str):
+    def get_traffic_data(self, origin: str, destination: str, departure_time: time | None = None):
         # Request directions via public transit
+        if not departure_time:
+            departure_time = "now"
+            departure_datetime = datetime.now()
+        else:
+            departure_time, departure_datetime = self._next_arrival_epoch(departure_time)
         directions_result = self.gmaps.distance_matrix(
             origin,
             destination,
             mode="driving",
-            departure_time="now",
+            departure_time=departure_time,
             traffic_model="pessimistic",
         )
         origin_address = directions_result["origin_addresses"][0]
@@ -33,11 +39,38 @@ class TrafficMonitor:
 
         return {
             "query_time": datetime.now().isoformat(),
+            "departure_time": departure_datetime.isoformat(),
             "origin": origin_address,
             "destination": destination_address,
             "clear_duration_mins": clear_duration_secs / 60,
             "traffic_duration_mins": traffic_duration_secs / 60,
         }
+
+    def _next_arrival_epoch(
+        self,
+        target_time: time | str,
+        tz_name: str = "Europe/London",
+    ) -> int:
+        """Return epoch seconds for the next occurrence of target_time in tz_name."""
+        if isinstance(target_time, str):
+            # Accept "HH:MM" or "HH:MM:SS"
+            target_time = time.fromisoformat(target_time)
+
+        tz = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+
+        # Build today's target in the same timezone
+        today_target = now.replace(
+            hour=target_time.hour,
+            minute=target_time.minute,
+            second=getattr(target_time, "second", 0),
+            microsecond=0,
+        )
+
+        target_dt = today_target if now <= today_target else today_target + timedelta(days=1)
+
+        # Convert to Unix epoch seconds
+        return (int(target_dt.timestamp()), target_dt)
 
 
 def plot_to_png(jsonl_filename: str, output_png: str):
@@ -153,6 +186,19 @@ def main():
     print(f"Appended traffic data to {output_jsonl_filename}")
     # plot_to_png(output_jsonl_filename, "traffic_report.png")
     plot_anomaly_to_png(output_jsonl_filename, "traffic_report_anomaly.png")
+
+    arrival_response = traffic_monitor.get_traffic_data(
+        "164 Devonshire Road, London SE23 3SZ",
+        "Rosemead Preparatory School, 70 Thurlow Park Road, London SE21 8HZ",
+        departure_time=time(8, 00),
+    )
+
+    output_jsonl_arrival_filename = "traffic_report_arrival.jsonl"
+
+    with open(output_jsonl_arrival_filename, "a") as f:
+        f.write(f"{json.dumps(arrival_response)}\n")
+    print(f"Appended traffic arrival data to {output_jsonl_arrival_filename}")
+    plot_anomaly_to_png(output_jsonl_arrival_filename, "traffic_report_arrival.png")
 
 
 if __name__ == "__main__":

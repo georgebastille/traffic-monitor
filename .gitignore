@@ -9,10 +9,7 @@ wheels/
 # Virtual environments
 .venv
 .env
-traffic_report.jsonl
 cron.log
-traffic_report.png
-traffic_report.png traffic_report_anomaly.png
-.png
-traffic_report_anomaly.png
+*.png
+*.jsonl
 .ipynb_checkpoints/
