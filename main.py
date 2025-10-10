@@ -6,8 +6,11 @@ from zoneinfo import ZoneInfo
 import googlemaps
 import matplotlib.pyplot as plt
 import pandas as pd
+import requests
 from dotenv import load_dotenv
 from matplotlib.dates import DateFormatter, HourLocator
+
+NTFY_TOPIC = "traffic_monitor"
 
 
 class TrafficMonitor:
@@ -17,6 +20,9 @@ class TrafficMonitor:
 
     def __init__(self, api_key: str):
         self.gmaps = googlemaps.Client(key=api_key)
+
+    def notify(self, msg):
+        requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=msg.encode())
 
     def get_traffic_data(self, origin: str, destination: str, departure_time: time | None = None):
         # Request directions via public transit
@@ -192,6 +198,11 @@ def main():
         "Rosemead Preparatory School, 70 Thurlow Park Road, London SE21 8HZ",
         departure_time=time(8, 00),
     )
+    if arrival_response["traffic_duration_mins"] > 20:
+        print("Sending traffic alert notification")
+        traffic_monitor.notify(
+            f"Traffic alert! Expected travel time is {arrival_response['traffic_duration_mins']:.1f} mins."
+        )
 
     output_jsonl_arrival_filename = "traffic_report_arrival.jsonl"
 
