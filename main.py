@@ -43,9 +43,7 @@ def main() -> None:
     log(f"Updated arrival series at {ARRIVAL_JSONL}")
 
     if arrival_sample.traffic_duration_mins > ALERT_THRESHOLD_MINS:
-        monitor.notify(
-            f"Traffic alert! Expected travel time is {arrival_sample.traffic_duration_mins:.1f} mins."
-        )
+        monitor.notify(f"Traffic alert! Expected travel time is {arrival_sample.traffic_duration_mins:.1f} mins.")
         log("Sent traffic alert notification")
 
 

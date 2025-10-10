@@ -184,23 +184,14 @@ def test_plot_anomaly_to_png_creates_chart(tmp_path: Path) -> None:
 
 def test_notify_uses_injected_sender() -> None:
     client = FakeClient(build_response())
-    calls: dict[str, object] = {}
+    captured: list[str] = []
 
-    def fake_sender(url: str, *, data: bytes) -> None:
-        calls["url"] = url
-        calls["data"] = data
+    def fake_sender(message: str) -> None:
+        captured.append(message)
 
-    monitor = TrafficMonitor(
-        client,
-        timezone="UTC",
-        notification_topic="custom-topic",
-        send_notification=fake_sender,
-    )
-
+    monitor = TrafficMonitor(client, timezone="UTC", topic="custom-topic", notifier=fake_sender)
     monitor.notify("hello world")
-
-    assert calls["url"] == "https://ntfy.sh/custom-topic"
-    assert calls["data"] == b"hello world"
+    assert captured == ["hello world"]
 
 
 def test_plotting_handles_mixed_timezone_strings(tmp_path: Path) -> None:

@@ -4,8 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence, cast
-
+from typing import Any, Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import googlemaps
@@ -14,32 +13,8 @@ import requests
 NTFY_TOPIC = "traffic_monitor"
 
 
-class DistanceMatrixClient(Protocol):
-    """Minimal googlemaps client surface needed by the monitor."""
-
-    def distance_matrix(
-        self,
-        origin: str,
-        destination: str,
-        *,
-        mode: str,
-        departure_time: Any,
-        traffic_model: str,
-    ) -> Mapping[str, Any]:
-        ...
-
-
-class NotificationSender(Protocol):
-    """Callable used to deliver notifications."""
-
-    def __call__(self, url: str, *, data: bytes) -> Any:
-        ...
-
-
 @dataclass(frozen=True)
 class TrafficSample:
-    """Canonical record for a single distance-matrix query."""
-
     query_time: datetime
     departure_time: datetime
     origin: str
@@ -47,56 +22,45 @@ class TrafficSample:
     clear_duration_mins: float
     traffic_duration_mins: float
 
-    def to_dict(self) -> Mapping[str, Any]:
-        """Serialize the sample to a JSON-ready mapping."""
-        return {
-            "query_time": self.query_time.isoformat(),
-            "departure_time": self.departure_time.isoformat(),
-            "origin": self.origin,
-            "destination": self.destination,
-            "clear_duration_mins": self.clear_duration_mins,
-            "traffic_duration_mins": self.traffic_duration_mins,
-        }
+    def to_json_line(self) -> str:
+        return json.dumps(
+            {
+                "query_time": self.query_time.isoformat(),
+                "departure_time": self.departure_time.isoformat(),
+                "origin": self.origin,
+                "destination": self.destination,
+                "clear_duration_mins": self.clear_duration_mins,
+                "traffic_duration_mins": self.traffic_duration_mins,
+            }
+        )
 
 
 def append_sample(path: Path | str, sample: TrafficSample) -> None:
-    """Append a JSON record for the provided sample."""
     output_path = Path(path)
-    parent = output_path.parent
-    if parent and not parent.exists():
-        parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("a", encoding="utf-8") as handle:
-        handle.write(f"{json.dumps(sample.to_dict())}\n")
+        handle.write(f"{sample.to_json_line()}\n")
 
 
 class TrafficMonitor:
-    """High-level interface for retrieving traffic metrics and sending alerts."""
-
     def __init__(
         self,
-        client: DistanceMatrixClient,
+        client: Any,
         *,
         timezone: str = "Europe/London",
-        notification_topic: str = NTFY_TOPIC,
-        send_notification: NotificationSender | None = None,
+        notifier: Callable[[str], None] | None = None,
+        topic: str = NTFY_TOPIC,
     ) -> None:
         self._client = client
-        self._tz = timezone
-        self._tzinfo = ZoneInfo(timezone)
-        self._notification_topic = notification_topic
-        self._send_notification = send_notification or requests.post
+        self._zone = ZoneInfo(timezone)
+        self._topic = topic
+        self._notifier = notifier or (lambda msg: requests.post(f"https://ntfy.sh/{self._topic}", data=msg.encode()))
 
     @classmethod
     def from_api_key(
-        cls,
-        api_key: str,
-        *,
-        timezone: str = "Europe/London",
-        notification_topic: str = NTFY_TOPIC,
+        cls, api_key: str, *, timezone: str = "Europe/London", topic: str = NTFY_TOPIC
     ) -> "TrafficMonitor":
-        """Factory for production use."""
-        client = create_googlemaps_client(api_key)
-        return cls(client, timezone=timezone, notification_topic=notification_topic)
+        return cls(googlemaps.Client(key=api_key), timezone=timezone, topic=topic)
 
     def get_traffic_data(
         self,
@@ -105,8 +69,7 @@ class TrafficMonitor:
         *,
         departure_time: time | str | None = None,
     ) -> TrafficSample:
-        """Fetch the clear/traffic travel times for the requested trip."""
-        (departure_arg, departure_dt) = self._resolve_departure_time(departure_time)
+        departure_arg, departure_dt = self._resolve_departure(departure_time)
         response = self._client.distance_matrix(
             origin,
             destination,
@@ -114,85 +77,49 @@ class TrafficMonitor:
             departure_time=departure_arg,
             traffic_model="pessimistic",
         )
-        return self._parse_distance_matrix_response(response, departure_dt)
-
-    def notify(self, message: str) -> None:
-        """Send a notification to the configured ntfy topic."""
-        url = f"https://ntfy.sh/{self._notification_topic}"
-        self._send_notification(url, data=message.encode())
-
-    def _resolve_departure_time(self, departure_time: time | str | None) -> tuple[Any, datetime]:
-        if departure_time is None:
-            now = datetime.now(self._tzinfo)
-            return "now", now
-        next_departure = _next_departure(departure_time, tz=self._tzinfo)
-        return next_departure.epoch_seconds, next_departure.timestamp
-
-    def _parse_distance_matrix_response(
-        self,
-        response: Mapping[str, Any],
-        departure_time: datetime,
-    ) -> TrafficSample:
-        origin_address, destination_address = _extract_addresses(response)
         element = _first_element(response)
-        clear_duration_mins = _extract_duration(element, "duration")
-        traffic_duration_mins = _extract_duration(element, "duration_in_traffic")
         return TrafficSample(
-            query_time=datetime.now(self._tzinfo),
-            departure_time=departure_time,
-            origin=origin_address,
-            destination=destination_address,
-            clear_duration_mins=clear_duration_mins,
-            traffic_duration_mins=traffic_duration_mins,
+            query_time=datetime.now(self._zone),
+            departure_time=departure_dt,
+            origin=_first_value(response, "origin_addresses"),
+            destination=_first_value(response, "destination_addresses"),
+            clear_duration_mins=_duration_minutes(element, "duration"),
+            traffic_duration_mins=_duration_minutes(element, "duration_in_traffic"),
         )
 
+    def notify(self, message: str) -> None:
+        self._notifier(message)
 
-def create_googlemaps_client(api_key: str) -> googlemaps.Client:
-    """Create a Google Maps client suitable for dependency injection."""
-    return googlemaps.Client(key=api_key)
-
-
-@dataclass(frozen=True)
-class DepartureInfo:
-    epoch_seconds: int
-    timestamp: datetime
-
-
-def _next_departure(target_time: time | str, *, tz: ZoneInfo) -> DepartureInfo:
-    """Return epoch seconds and timezone-aware datetime for the next occurrence of target_time."""
-    parsed_time = time.fromisoformat(target_time) if isinstance(target_time, str) else target_time
-    now = datetime.now(tz)
-    today_target = now.replace(
-        hour=parsed_time.hour,
-        minute=parsed_time.minute,
-        second=getattr(parsed_time, "second", 0),
-        microsecond=0,
-    )
-    candidate = today_target if now <= today_target else today_target + timedelta(days=1)
-    return DepartureInfo(epoch_seconds=int(candidate.timestamp()), timestamp=candidate)
+    def _resolve_departure(self, departure_time: time | str | None) -> tuple[Any, datetime]:
+        if departure_time is None:
+            now = datetime.now(self._zone)
+            return "now", now
+        target = time.fromisoformat(departure_time) if isinstance(departure_time, str) else departure_time
+        now = datetime.now(self._zone)
+        today = now.replace(hour=target.hour, minute=target.minute, second=getattr(target, "second", 0), microsecond=0)
+        scheduled = today if now <= today else today + timedelta(days=1)
+        return int(scheduled.timestamp()), scheduled
 
 
-def _extract_addresses(response: Mapping[str, Any]) -> tuple[str, str]:
-    origin_addresses = response.get("origin_addresses") or []
-    destination_addresses = response.get("destination_addresses") or []
-    if not origin_addresses or not destination_addresses:
-        raise ValueError("Distance matrix response missing addresses")
-    return origin_addresses[0], destination_addresses[0]
+def _first_value(response: Mapping[str, Any], key: str) -> str:
+    values: Sequence[str] = response.get(key, [])  # type: ignore[assignment]
+    if not values:
+        raise ValueError(f"Distance matrix response missing {key}")
+    return values[0]
 
 
 def _first_element(response: Mapping[str, Any]) -> Mapping[str, Any]:
-    rows = cast(Sequence[Mapping[str, Any]], response.get("rows") or [])
+    rows: Sequence[Mapping[str, Any]] = response.get("rows", [])  # type: ignore[assignment]
     if not rows:
         raise ValueError("Distance matrix response missing rows")
-    row = rows[0]
-    elements = cast(Sequence[Mapping[str, Any]], row.get("elements") or [])
+    elements: Sequence[Mapping[str, Any]] = rows[0].get("elements", [])  # type: ignore[assignment]
     if not elements:
         raise ValueError("Distance matrix response missing elements")
     return elements[0]
 
 
-def _extract_duration(element: Mapping[str, Any], key: str) -> float:
-    node = element.get(key)
-    if not node or "value" not in node:
+def _duration_minutes(element: Mapping[str, Any], key: str) -> float:
+    payload = element.get(key)
+    if not payload or "value" not in payload:
         raise ValueError(f"Distance matrix element missing {key}")
-    return float(node["value"]) / 60.0
+    return float(payload["value"]) / 60.0

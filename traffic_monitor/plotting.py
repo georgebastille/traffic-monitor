@@ -108,9 +108,7 @@ def _normalize_query_time(series: pd.Series) -> pd.Series:
 
     if tz_mask.any():
         aware_idx = pd.to_datetime(raw[tz_mask], format="ISO8601")
-        aware_values = [
-            pd.Timestamp(value).to_pydatetime().replace(tzinfo=None) for value in aware_idx
-        ]
+        aware_values = [pd.Timestamp(value).to_pydatetime().replace(tzinfo=None) for value in aware_idx]
         normalized.loc[tz_mask] = aware_values
 
     if (~tz_mask).any():
