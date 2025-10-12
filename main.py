@@ -14,7 +14,7 @@ TRAFFIC_JSONL = Path("traffic_report.jsonl")
 TRAFFIC_PNG = Path("traffic_report_anomaly.png")
 ARRIVAL_JSONL = Path("traffic_report_arrival.jsonl")
 ARRIVAL_PNG = Path("traffic_report_arrival.png")
-ALERT_THRESHOLD_MINS = 20.0
+ALERT_THRESHOLD_MINS = 21.5
 
 
 def log(message: str) -> None:
