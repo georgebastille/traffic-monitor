@@ -12,4 +12,6 @@ wheels/
 cron.log
 *.png
 *.jsonl
+traffic_route_baseline.json
+traffic_notification_state.json
 .ipynb_checkpoints/

@@ -8,8 +8,8 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import googlemaps
-from googlemaps import convert
 import requests
+from googlemaps import convert
 
 NTFY_TOPIC = "traffic_monitor"
 DEFAULT_WAYPOINT_COUNT = 3
