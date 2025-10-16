@@ -85,8 +85,8 @@ def test_pattern_alert_only_once_per_day() -> None:
 
     first = evaluate_pattern_alert(
         now=now,
-        ema_minutes=30.0,
-        stats=(20.0, 4.0),
+        series=[18.0, 17.5, 16.0],
+        baseline=12.0,
         state=state,
     )
     assert first is not None
@@ -94,8 +94,8 @@ def test_pattern_alert_only_once_per_day() -> None:
     state.pattern_alert_date = now.date()
     second = evaluate_pattern_alert(
         now=now + timedelta(minutes=10),
-        ema_minutes=35.0,
-        stats=(20.0, 4.0),
+        series=[15.0, 14.0, 13.0],
+        baseline=12.0,
         state=state,
     )
     assert second is None

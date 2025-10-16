@@ -6,13 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from traffic_monitor.analytics import (
-    compute_baseline_duration,
-    compute_ema,
-    compute_time_of_day_stats,
-    filter_recent_weekday_samples,
-    load_samples,
-)
+from traffic_monitor.analytics import compute_baseline_duration, compute_time_of_day_stats, filter_recent_weekday_samples, load_samples
 from traffic_monitor.monitor import TrafficSample
 
 
@@ -163,26 +157,3 @@ def test_compute_time_of_day_stats_filters_by_tolerance() -> None:
     mean, stdev = stats
     assert mean == pytest.approx(21.0)
     assert stdev == pytest.approx(1.0)
-
-
-def test_compute_ema_respects_time_decay() -> None:
-    base = datetime(2024, 10, 10, 7, 0, tzinfo=timezone.utc)
-    samples = [
-        make_sample(query_time=base, departure_time=base, duration=18.0),
-        make_sample(
-            query_time=base + timedelta(minutes=5),
-            departure_time=base + timedelta(minutes=5),
-            duration=30.0,
-        ),
-        make_sample(
-            query_time=base + timedelta(minutes=30),
-            departure_time=base + timedelta(minutes=30),
-            duration=24.0,
-        ),
-    ]
-
-    ema = compute_ema(samples, tau_minutes=20.0)
-
-    assert ema is not None
-    assert ema > 18.0
-    assert ema < 24.0

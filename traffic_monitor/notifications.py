@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Optional
+from typing import Optional, Sequence
 
 from traffic_monitor.analytics import minutes_since_midnight
 from traffic_monitor.state import NotificationState
@@ -53,26 +53,32 @@ def evaluate_departure_notification(
 def evaluate_pattern_alert(
     *,
     now: datetime,
-    ema_minutes: float | None,
-    stats: tuple[float, float] | None,
+    series: Sequence[float],
+    baseline: float | None,
     state: NotificationState,
 ) -> Optional[str]:
-    if ema_minutes is None or stats is None:
+    if baseline is None:
         return None
     if now.weekday() >= 5:
         return None
-    mean, stdev = stats
-    if stdev <= 0.05:
+    if len(series) < 3:
         return None
-    deviation = ema_minutes - mean
-    threshold = 2 * stdev
-    if abs(deviation) < threshold:
+    recent = list(series)[-3:]
+    if any(value <= 0 for value in recent):
+        return None
+    direction = None
+    if all(value >= 1.25 * baseline for value in recent):
+        direction = "longer"
+        delta = min(value - baseline for value in recent)
+    elif all(value <= 0.75 * baseline for value in recent):
+        direction = "shorter"
+        delta = baseline - max(value for value in recent)
+    if direction is None:
         return None
     if state.pattern_alert_date == now.date():
         return None
-    direction = "longer" if deviation > 0 else "shorter"
     message = (
-        f"Traffic pattern changed: EMA {abs(deviation):.1f} mins {direction} than normal "
-        f"(avg {mean:.1f} mins, σ={stdev:.1f})."
+        f"Traffic pattern changed: last 3 samples are {direction} than normal "
+        f"by at least {delta:.1f} mins (baseline {baseline:.1f} mins)."
     )
     return message

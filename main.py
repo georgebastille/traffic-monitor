@@ -1,21 +1,16 @@
 from __future__ import annotations
 
 import os
+import argparse
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import Sequence
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from traffic_monitor import TrafficMonitor, append_sample, plot_anomaly_to_png
-from traffic_monitor.analytics import (
-    compute_baseline_duration,
-    compute_ema,
-    compute_time_of_day_stats,
-    filter_recent_weekday_samples,
-    load_samples,
-    minutes_since_midnight,
-)
+from traffic_monitor import TomTomClient, TrafficMonitor, append_sample, plot_anomaly_to_png
+from traffic_monitor.analytics import compute_baseline_duration, compute_time_of_day_stats, filter_recent_weekday_samples, load_samples, minutes_since_midnight
 from traffic_monitor.notifications import evaluate_departure_notification, evaluate_pattern_alert
 from traffic_monitor.state import NotificationState
 
@@ -31,6 +26,17 @@ TIMEZONE = ZoneInfo("Europe/London")
 
 def log(message: str) -> None:
     print(f"[{datetime.now().isoformat()}] {message}")
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Traffic monitor")
+    parser.add_argument(
+        "--provider",
+        choices=["google", "tomtom"],
+        default="tomtom",
+        help="Routing provider to use (default: google)",
+    )
+    return parser.parse_args(list(argv) if argv is not None else None)
 
 
 def _resolve_target_arrival(now: datetime) -> datetime:
@@ -49,13 +55,22 @@ def _next_weekday(start: date) -> date:
     return current
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
     load_dotenv()
-    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
-    if not api_key:
-        raise RuntimeError("GOOGLE_MAPS_API_KEY is not set")
-
-    monitor = TrafficMonitor.from_api_key(api_key)
+    if args.provider == "google":
+        api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+        if not api_key:
+            raise RuntimeError("GOOGLE_MAPS_API_KEY is not set")
+        monitor = TrafficMonitor.from_google_api_key(api_key)
+    else:
+        api_key = os.getenv("TOMTOM_API_KEY")
+        if not api_key:
+            raise RuntimeError("TOMTOM_API_KEY is not set")
+        monitor = TrafficMonitor(
+            TomTomClient(api_key, timezone="Europe/London"),
+            timezone="Europe/London",
+        )
     current_sample = monitor.get_traffic_data(HOME_ORIGIN, SCHOOL_DESTINATION)
     append_sample(TRAFFIC_JSONL, current_sample)
     plot_anomaly_to_png(TRAFFIC_JSONL, TRAFFIC_PNG)
@@ -67,11 +82,11 @@ def main() -> None:
     traffic_samples = load_samples(TRAFFIC_JSONL, tzinfo=TIMEZONE)
     recent_samples = filter_recent_weekday_samples(traffic_samples, reference=now)
     baseline_duration = compute_baseline_duration(recent_samples) or current_sample.traffic_duration_mins
-    ema_duration = compute_ema(recent_samples)
     stats = compute_time_of_day_stats(
         recent_samples,
         target_minutes=minutes_since_midnight(current_sample.departure_time),
     )
+    recent_durations = [sample.traffic_duration_mins for sample in recent_samples]
 
     state = NotificationState.load(STATE_PATH)
     state_changed = False
@@ -94,8 +109,8 @@ def main() -> None:
 
     pattern_alert = evaluate_pattern_alert(
         now=now,
-        ema_minutes=ema_duration,
-        stats=stats,
+        series=recent_durations,
+        baseline=baseline_duration,
         state=state,
     )
     if pattern_alert:

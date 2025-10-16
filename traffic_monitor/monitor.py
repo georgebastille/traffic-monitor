@@ -64,7 +64,7 @@ class TrafficMonitor:
         self._route_cache_path = Path(route_cache_path)
 
     @classmethod
-    def from_api_key(
+    def from_google_api_key(
         cls,
         api_key: str,
         *,
@@ -75,6 +75,24 @@ class TrafficMonitor:
     ) -> "TrafficMonitor":
         return cls(
             googlemaps.Client(key=api_key),
+            timezone=timezone,
+            topic=topic,
+            via_waypoints=via_waypoints,
+            route_cache_path=route_cache_path,
+        )
+
+    @classmethod
+    def from_api_key(
+        cls,
+        api_key: str,
+        *,
+        timezone: str = "Europe/London",
+        topic: str = NTFY_TOPIC,
+        via_waypoints: Sequence[tuple[float, float]] | None = None,
+        route_cache_path: Path | str = ROUTE_BASELINE_PATH,
+    ) -> "TrafficMonitor":
+        return cls.from_google_api_key(
+            api_key,
             timezone=timezone,
             topic=topic,
             via_waypoints=via_waypoints,

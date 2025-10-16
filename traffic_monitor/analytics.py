@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import math
 import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from zoneinfo import ZoneInfo
 
@@ -101,25 +100,3 @@ def compute_time_of_day_stats(
     if stdev == 0.0:
         return None
     return mean, stdev
-
-
-def compute_ema(
-    samples: Iterable[TrafficSample],
-    *,
-    tau_minutes: float = 20.0,
-) -> float | None:
-    iterator = iter(sorted(samples, key=lambda sample: sample.query_time))
-    try:
-        first = next(iterator)
-    except StopIteration:
-        return None
-    ema = first.traffic_duration_mins
-    last_time = first.query_time
-    for sample in iterator:
-        delta_minutes = (sample.query_time - last_time).total_seconds() / 60.0
-        if delta_minutes <= 0:
-            delta_minutes = 1e-6
-        alpha = 1.0 if tau_minutes <= 0 else 1 - math.exp(-delta_minutes / tau_minutes)
-        ema = alpha * sample.traffic_duration_mins + (1 - alpha) * ema
-        last_time = sample.query_time
-    return ema
