@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Optional, Sequence
+from typing import Optional
 
 from traffic_monitor.analytics import minutes_since_midnight
 from traffic_monitor.state import NotificationState
@@ -12,6 +13,12 @@ from traffic_monitor.state import NotificationState
 class DepartureDecision:
     message: str
     departure_minutes: float
+
+
+@dataclass(frozen=True)
+class PatternAlertDecision:
+    message: Optional[str]
+    state_changed: bool
 
 
 def evaluate_departure_notification(
@@ -52,33 +59,92 @@ def evaluate_departure_notification(
 
 def evaluate_pattern_alert(
     *,
-    now: datetime,
-    series: Sequence[float],
-    baseline: float | None,
+    sample_time: datetime,
+    current_duration_mins: float,
+    baseline_duration_mins: float | None,
     state: NotificationState,
-) -> Optional[str]:
-    if baseline is None:
-        return None
-    if now.weekday() >= 5:
-        return None
-    if len(series) < 3:
-        return None
-    recent = list(series)[-3:]
-    if any(value <= 0 for value in recent):
-        return None
-    direction = None
-    if all(value >= 1.25 * baseline for value in recent):
+    deadband_minutes: float = 2.0,
+    integral_threshold: float = 180.0,
+    decay_minutes: float = 120.0,
+    sample_interval_minutes: float = 5.0,
+    max_sample_gap_minutes: float = 15.0,
+) -> PatternAlertDecision:
+    """
+    Integrate deviations between the current duration and baseline to detect sustained anomalies.
+    """
+    if baseline_duration_mins is None or baseline_duration_mins <= 0:
+        return PatternAlertDecision(message=None, state_changed=False)
+    if sample_time.weekday() >= 5:
+        return PatternAlertDecision(message=None, state_changed=False)
+
+    state_changed = False
+    now = sample_time
+
+    # Determine elapsed minutes since the last observation we incorporated.
+    if state.anomaly_last_timestamp is not None:
+        delta_minutes = (sample_time - state.anomaly_last_timestamp).total_seconds() / 60.0
+    else:
+        delta_minutes = sample_interval_minutes
+    if delta_minutes <= 0:
+        delta_minutes = sample_interval_minutes
+    delta_minutes = min(delta_minutes, max_sample_gap_minutes)
+
+    decay_factor = _decay_factor(delta_minutes, decay_minutes)
+    if decay_factor < 1.0:
+        state.anomaly_integral_high *= decay_factor
+        state.anomaly_integral_low *= decay_factor
+        state_changed = True
+
+    deviation = current_duration_mins - baseline_duration_mins
+    contribution = 0.0
+    direction: Optional[str] = None
+
+    if deviation > deadband_minutes:
+        contribution = (deviation - deadband_minutes) * delta_minutes
+        state.anomaly_integral_high += contribution
+        state.anomaly_integral_low = 0.0
         direction = "longer"
-        delta = min(value - baseline for value in recent)
-    elif all(value <= 0.75 * baseline for value in recent):
+        state_changed = True
+    elif deviation < -deadband_minutes:
+        contribution = (abs(deviation) - deadband_minutes) * delta_minutes
+        state.anomaly_integral_low += contribution
+        state.anomaly_integral_high = 0.0
         direction = "shorter"
-        delta = baseline - max(value for value in recent)
-    if direction is None:
-        return None
+        state_changed = True
+    else:
+        # Within the comfort band; minor decay has already been applied.
+        if state.anomaly_integral_high < 1e-3:
+            state.anomaly_integral_high = 0.0
+        if state.anomaly_integral_low < 1e-3:
+            state.anomaly_integral_low = 0.0
+        state.anomaly_last_timestamp = sample_time
+        return PatternAlertDecision(message=None, state_changed=True)
+
+    state.anomaly_last_timestamp = sample_time
+
+    if direction == "longer":
+        integral_value = state.anomaly_integral_high
+    else:
+        integral_value = state.anomaly_integral_low
+
+    if integral_value < integral_threshold:
+        return PatternAlertDecision(message=None, state_changed=state_changed)
+
     if state.pattern_alert_date == now.date():
-        return None
+        return PatternAlertDecision(message=None, state_changed=state_changed)
+
     message = (
-        f"Traffic pattern changed: last 3 samples are {direction} than normal "
-        f"by at least {delta:.1f} mins (baseline {baseline:.1f} mins)."
+        f"Traffic pattern changed: sustained {direction} travel times "
+        f"by ~{abs(deviation):.1f} mins (baseline {baseline_duration_mins:.1f} mins)."
     )
-    return message
+    state.pattern_alert_date = now.date()
+    state.anomaly_integral_high = 0.0
+    state.anomaly_integral_low = 0.0
+    state_changed = True
+    return PatternAlertDecision(message=message, state_changed=state_changed)
+
+
+def _decay_factor(delta_minutes: float, decay_minutes: float) -> float:
+    if decay_minutes <= 0:
+        return 0.0
+    return math.exp(-delta_minutes / decay_minutes)

@@ -10,8 +10,8 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from traffic_monitor import TomTomClient, TrafficMonitor, append_sample, plot_anomaly_to_png
-from traffic_monitor.analytics import compute_baseline_duration, compute_time_of_day_stats, filter_recent_weekday_samples, load_samples, minutes_since_midnight
-from traffic_monitor.notifications import evaluate_departure_notification, evaluate_pattern_alert
+from traffic_monitor.analytics import compute_bucket_ema_baseline, filter_recent_weekday_samples, load_samples, prune_jsonl_history
+from traffic_monitor.notifications import PatternAlertDecision, evaluate_departure_notification, evaluate_pattern_alert
 from traffic_monitor.state import NotificationState
 
 HOME_ORIGIN = "164 Devonshire Road, London SE23 3SZ"
@@ -70,23 +70,30 @@ def main(argv: Sequence[str] | None = None) -> None:
         monitor = TrafficMonitor(
             TomTomClient(api_key, timezone="Europe/London"),
             timezone="Europe/London",
-        )
+    )
     current_sample = monitor.get_traffic_data(HOME_ORIGIN, SCHOOL_DESTINATION)
     append_sample(TRAFFIC_JSONL, current_sample)
     plot_anomaly_to_png(TRAFFIC_JSONL, TRAFFIC_PNG)
     log(f"Updated baseline series at {TRAFFIC_JSONL}")
-
     now = datetime.now(TIMEZONE)
+
+    cutoff = now - timedelta(days=14)
+    removed = prune_jsonl_history(TRAFFIC_JSONL, cutoff=cutoff)
+    if removed:
+        log(f"Pruned {removed} entries older than {cutoff.date()} from {TRAFFIC_JSONL}")
+
     target_arrival = _resolve_target_arrival(now)
 
     traffic_samples = load_samples(TRAFFIC_JSONL, tzinfo=TIMEZONE)
-    recent_samples = filter_recent_weekday_samples(traffic_samples, reference=now)
-    baseline_duration = compute_baseline_duration(recent_samples) or current_sample.traffic_duration_mins
-    stats = compute_time_of_day_stats(
+    historical_samples = [sample for sample in traffic_samples if sample.query_time < current_sample.query_time]
+    recent_samples = filter_recent_weekday_samples(historical_samples, reference=now)
+    baseline_duration = compute_bucket_ema_baseline(
         recent_samples,
-        target_minutes=minutes_since_midnight(current_sample.departure_time),
-    )
-    recent_durations = [sample.traffic_duration_mins for sample in recent_samples]
+        target_departure=current_sample.departure_time,
+        max_weekdays=5,
+        bucket_minutes=5,
+        ema_span=5,
+    ) or current_sample.traffic_duration_mins
 
     state = NotificationState.load(STATE_PATH)
     state_changed = False
@@ -107,15 +114,40 @@ def main(argv: Sequence[str] | None = None) -> None:
         state_changed = True
         log("Sent departure notification")
 
-    pattern_alert = evaluate_pattern_alert(
-        now=now,
-        series=recent_durations,
-        baseline=baseline_duration,
+    threshold_env = os.getenv("TRAFFIC_ANOMALY_THRESHOLD")
+    try:
+        integral_threshold = float(threshold_env) if threshold_env else 180.0
+    except ValueError:
+        integral_threshold = 180.0
+        log(f"Ignoring invalid TRAFFIC_ANOMALY_THRESHOLD={threshold_env!r}")
+
+    deadband_env = os.getenv("TRAFFIC_ANOMALY_DEADBAND")
+    try:
+        anomaly_deadband = float(deadband_env) if deadband_env else 2.0
+    except ValueError:
+        anomaly_deadband = 2.0
+        log(f"Ignoring invalid TRAFFIC_ANOMALY_DEADBAND={deadband_env!r}")
+
+    decay_env = os.getenv("TRAFFIC_ANOMALY_DECAY_MINUTES")
+    try:
+        anomaly_decay = float(decay_env) if decay_env else 120.0
+    except ValueError:
+        anomaly_decay = 120.0
+        log(f"Ignoring invalid TRAFFIC_ANOMALY_DECAY_MINUTES={decay_env!r}")
+
+    pattern_decision: PatternAlertDecision = evaluate_pattern_alert(
+        sample_time=current_sample.query_time,
+        current_duration_mins=current_sample.traffic_duration_mins,
+        baseline_duration_mins=baseline_duration,
         state=state,
+        integral_threshold=integral_threshold,
+        deadband_minutes=anomaly_deadband,
+        decay_minutes=anomaly_decay,
     )
-    if pattern_alert:
-        monitor.notify(pattern_alert)
-        state.pattern_alert_date = now.date()
+    if pattern_decision.state_changed:
+        state_changed = True
+    if pattern_decision.message:
+        monitor.notify(pattern_decision.message)
         state_changed = True
         log("Sent pattern change notification")
 

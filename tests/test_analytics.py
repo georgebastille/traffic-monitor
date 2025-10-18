@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from traffic_monitor.analytics import compute_baseline_duration, compute_time_of_day_stats, filter_recent_weekday_samples, load_samples
+from traffic_monitor.analytics import (
+    compute_baseline_duration,
+    compute_bucket_ema_baseline,
+    compute_time_of_day_stats,
+    filter_recent_weekday_samples,
+    load_samples,
+    prune_jsonl_history,
+)
 from traffic_monitor.monitor import TrafficSample
 
 
@@ -157,3 +164,86 @@ def test_compute_time_of_day_stats_filters_by_tolerance() -> None:
     mean, stdev = stats
     assert mean == pytest.approx(21.0)
     assert stdev == pytest.approx(1.0)
+
+
+def test_compute_bucket_ema_baseline_uses_last_five_weekdays() -> None:
+    base = datetime(2024, 10, 7, 8, 0, tzinfo=timezone.utc)  # Monday
+    durations = [20.0, 21.0, 19.0, 18.0, 22.0, 25.0]  # Mon -> next Mon
+    samples = [
+        make_sample(
+            query_time=base + timedelta(days=index),
+            departure_time=base + timedelta(days=index),
+            duration=duration,
+        )
+        for index, duration in enumerate(durations)
+    ]
+    target_departure = base + timedelta(days=8)  # Tuesday following the last sample
+
+    baseline = compute_bucket_ema_baseline(
+        samples,
+        target_departure=target_departure,
+        max_weekdays=5,
+        bucket_minutes=5,
+        ema_span=5,
+    )
+
+    assert baseline is not None
+    # Manually calculated EMA over last 5 weekdays (Tue->Mon with alpha=1/3)
+    assert baseline == pytest.approx(21.91, abs=0.01)
+
+
+def test_compute_bucket_ema_baseline_averages_same_day_bucket() -> None:
+    base = datetime(2024, 10, 7, 8, 0, tzinfo=timezone.utc)
+    same_day_samples = [
+        make_sample(
+            query_time=base,
+            departure_time=base,
+            duration=20.0,
+        ),
+        make_sample(
+            query_time=base + timedelta(minutes=5),
+            departure_time=base + timedelta(minutes=5),
+            duration=22.0,
+        ),
+    ]
+    later_day = make_sample(
+        query_time=base + timedelta(days=1),
+        departure_time=base + timedelta(days=1),
+        duration=24.0,
+    )
+    samples = same_day_samples + [later_day]
+
+    baseline = compute_bucket_ema_baseline(
+        samples,
+        target_departure=base + timedelta(days=2),
+    )
+
+    # First day values should average to 21, then EMA towards 24.
+    assert baseline == pytest.approx(22.0, abs=0.01)
+
+
+def test_prune_jsonl_history_removes_records_before_cutoff(tmp_path: Path) -> None:
+    path = tmp_path / "series.jsonl"
+    older = {
+        "query_time": "2024-09-20T07:55:00+00:00",
+        "departure_time": "2024-09-20T08:00:00+00:00",
+        "origin": "Origin",
+        "destination": "Destination",
+        "traffic_duration_mins": 18.0,
+    }
+    newer = {
+        "query_time": "2024-10-10T07:55:00+00:00",
+        "departure_time": "2024-10-10T08:00:00+00:00",
+        "origin": "Origin",
+        "destination": "Destination",
+        "traffic_duration_mins": 19.0,
+    }
+    path.write_text("\n".join([json.dumps(older), json.dumps(newer)]) + "\n", encoding="utf-8")
+
+    cutoff = datetime(2024, 10, 1, tzinfo=timezone.utc)
+    removed = prune_jsonl_history(path, cutoff=cutoff)
+
+    assert removed == 1
+    remaining = load_samples(path, tzinfo=timezone.utc)
+    assert len(remaining) == 1
+    assert remaining[0].traffic_duration_mins == pytest.approx(19.0)

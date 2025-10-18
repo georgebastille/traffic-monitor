@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from traffic_monitor.notifications import evaluate_departure_notification, evaluate_pattern_alert
+from traffic_monitor.notifications import PatternAlertDecision, evaluate_departure_notification, evaluate_pattern_alert
 from traffic_monitor.state import NotificationState
 
 ZONE = ZoneInfo("Europe/London")
@@ -80,25 +80,42 @@ def test_departure_notification_only_resends_for_earlier_times() -> None:
 
 
 def test_pattern_alert_only_once_per_day() -> None:
-    now = datetime(2024, 10, 10, 7, 30, tzinfo=ZONE)
+    baseline = 12.0
+    start = datetime(2024, 10, 10, 7, 30, tzinfo=ZONE)
     state = NotificationState()
 
-    first = evaluate_pattern_alert(
-        now=now,
-        series=[18.0, 17.5, 16.0],
-        baseline=12.0,
+    first: PatternAlertDecision = evaluate_pattern_alert(
+        sample_time=start,
+        current_duration_mins=17.0,
+        baseline_duration_mins=baseline,
         state=state,
+        integral_threshold=180.0,
+        deadband_minutes=2.0,
     )
-    assert first is not None
+    assert first.message is None
+    assert first.state_changed
 
-    state.pattern_alert_date = now.date()
-    second = evaluate_pattern_alert(
-        now=now + timedelta(minutes=10),
-        series=[15.0, 14.0, 13.0],
-        baseline=12.0,
+    second: PatternAlertDecision = evaluate_pattern_alert(
+        sample_time=start + timedelta(minutes=5),
+        current_duration_mins=17.2,
+        baseline_duration_mins=baseline,
         state=state,
+        integral_threshold=180.0,
+        deadband_minutes=2.0,
     )
-    assert second is None
+    assert second.message is not None
+    assert "Traffic pattern changed" in second.message
+    assert state.pattern_alert_date == start.date()
+
+    third: PatternAlertDecision = evaluate_pattern_alert(
+        sample_time=start + timedelta(minutes=10),
+        current_duration_mins=17.5,
+        baseline_duration_mins=baseline,
+        state=state,
+        integral_threshold=180.0,
+        deadband_minutes=2.0,
+    )
+    assert third.message is None
 
 
 def minutes(target_arrival: datetime, duration: float) -> float:
