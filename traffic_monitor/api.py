@@ -151,7 +151,12 @@ def activate_route(route_id: str, _: Auth) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/chart/{route_id}")
-def get_chart(route_id: str, _: Auth) -> FileResponse:
+def get_chart(route_id: str, token: str | None = None) -> FileResponse:
+    expected = os.getenv("API_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=500, detail="API_TOKEN not configured")
+    if token != expected:
+        raise HTTPException(status_code=401, detail="Invalid token")
     png = _data_dir() / f"{route_id}_anomaly.png"
     if not png.exists():
         raise HTTPException(status_code=404, detail="Chart not available yet")

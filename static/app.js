@@ -91,7 +91,7 @@ async function refreshStatus() {
 function refreshChart() {
   if (!activeRouteId) return;
   const img = document.getElementById("chart-img");
-  img.src = `/api/chart/${activeRouteId}?t=${Date.now()}`;
+  img.src = `/api/chart/${activeRouteId}?token=${encodeURIComponent(TOKEN)}&t=${Date.now()}`;
   img.hidden = false;
 }
 
