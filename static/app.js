@@ -256,6 +256,8 @@ function arrayBufferToBase64(buffer) {
   return btoa(String.fromCharCode(...new Uint8Array(buffer)));
 }
 
+document.getElementById("refresh-btn").addEventListener("click", refreshStatus);
+
 // ---------------------------------------------------------------------------
 // Tab navigation
 // ---------------------------------------------------------------------------
