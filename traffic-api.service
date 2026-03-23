@@ -1,0 +1,14 @@
+[Unit]
+Description=Traffic Monitor API
+After=network.target
+
+[Service]
+User=richie
+WorkingDirectory=/home/richie/traffic-monitor
+EnvironmentFile=/home/richie/traffic-monitor/.env
+ExecStart=/home/richie/.local/bin/uv run uvicorn traffic_monitor.api:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

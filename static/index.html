@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#3b82f6" />
+  <title>Traffic Monitor</title>
+  <link rel="manifest" href="/manifest.json" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #3b82f6;
+      --good: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header h1 { font-size: 1rem; font-weight: 600; }
+
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.4rem 0.8rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.danger { background: var(--bad); }
+    button.secondary { background: var(--border); }
+
+    /* Token screen */
+    #token-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+      padding: 2rem;
+      gap: 1rem;
+    }
+
+    #token-screen h2 { font-size: 1.25rem; }
+
+    #token-form { display: flex; flex-direction: column; gap: 0.75rem; width: 100%; max-width: 320px; }
+
+    input, select {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+      width: 100%;
+    }
+
+    label { font-size: 0.85rem; color: var(--muted); }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .tab-btn {
+      flex: 1;
+      background: none;
+      color: var(--muted);
+      border: none;
+      border-radius: 0;
+      padding: 0.75rem 0.5rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    .tab-btn.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
+
+    /* Content */
+    .content { padding: 1rem; max-width: 640px; margin: 0 auto; }
+
+    /* Status */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .stat-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-value { font-size: 1.25rem; font-weight: 600; }
+    .good { color: var(--good); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+
+    #chart-img { width: 100%; border-radius: 8px; margin-top: 0.5rem; border: 1px solid var(--border); }
+
+    /* Routes */
+    .route-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+
+    .route-card.active { border-color: var(--accent); }
+
+    .route-info { display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
+    .route-info small { color: var(--muted); font-size: 0.8rem; }
+    .route-actions { display: flex; flex-direction: column; gap: 0.35rem; flex-shrink: 0; }
+
+    .badge {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.75rem;
+      text-align: center;
+    }
+
+    /* Form */
+    .form-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 1rem;
+    }
+
+    .form-section h3 { margin-bottom: 0.75rem; font-size: 0.95rem; }
+
+    .form-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.75rem; }
+
+    .form-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+
+    /* Settings */
+    .settings-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .settings-section h3 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+
+    .error { color: var(--bad); font-size: 0.9rem; padding: 0.5rem 0; }
+  </style>
+</head>
+<body>
+
+<!-- Token screen -->
+<div id="token-screen">
+  <h2>Traffic Monitor</h2>
+  <form id="token-form">
+    <div class="form-field">
+      <label for="token-input">Access token</label>
+      <input id="token-input" type="password" placeholder="Enter your token" autocomplete="current-password" required />
+    </div>
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+
+<!-- Main app -->
+<div id="main-app" hidden>
+  <header>
+    <h1>Traffic Monitor</h1>
+    <button id="logout-btn" class="secondary">Sign out</button>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="status">Status</button>
+    <button class="tab-btn" data-tab="routes">Routes</button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+  </nav>
+
+  <!-- Status tab -->
+  <div class="content tab-panel" id="tab-status">
+    <div id="status-panel"><p style="color:var(--muted)">Loading…</p></div>
+    <img id="chart-img" hidden alt="Baseline chart" />
+  </div>
+
+  <!-- Routes tab -->
+  <div class="content tab-panel" id="tab-routes" hidden>
+    <div id="routes-list"></div>
+    <button id="add-route-btn">+ Add route</button>
+
+    <div class="form-section" id="route-form-section" hidden>
+      <h3 id="route-form-title">Add Route</h3>
+      <form id="route-form">
+        <div class="form-field">
+          <label for="route-id">ID (slug, e.g. school-run)</label>
+          <input id="route-id" type="text" pattern="[a-z0-9\-]+" required placeholder="school-run" />
+        </div>
+        <div class="form-field">
+          <label for="route-name">Name</label>
+          <input id="route-name" type="text" required placeholder="School Run" />
+        </div>
+        <div class="form-field">
+          <label for="route-origin">Origin address</label>
+          <input id="route-origin" type="text" required placeholder="164 Devonshire Road, London SE23 3SZ" />
+        </div>
+        <div class="form-field">
+          <label for="route-destination">Destination address</label>
+          <input id="route-destination" type="text" required placeholder="Rosemead Preparatory School, London SE21 8HZ" />
+        </div>
+        <div class="form-field">
+          <label for="route-arrival">Arrive by</label>
+          <input id="route-arrival" type="time" required value="08:20" />
+        </div>
+        <div class="form-field">
+          <label for="route-timezone">Timezone</label>
+          <input id="route-timezone" type="text" required value="Europe/London" />
+        </div>
+        <div class="form-field">
+          <label for="route-provider">Provider</label>
+          <select id="route-provider">
+            <option value="tomtom">TomTom</option>
+            <option value="google">Google Maps</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Save</button>
+          <button type="button" id="cancel-route-btn" class="secondary">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Settings tab -->
+  <div class="content tab-panel" id="tab-settings" hidden>
+    <div class="settings-section">
+      <h3>Push notifications</h3>
+      <p id="push-status" style="color:var(--muted); font-size:0.85rem; margin-bottom:0.5rem;"></p>
+      <button id="push-btn">Enable notifications</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
