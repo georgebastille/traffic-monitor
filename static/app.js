@@ -274,8 +274,8 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 // ---------------------------------------------------------------------------
 async function boot() {
   try {
-    await refreshStatus();
     showApp();
+    await refreshStatus();
 
     if ("serviceWorker" in navigator) {
       await navigator.serviceWorker.register("/sw.js");
