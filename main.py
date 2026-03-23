@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo
 
+import requests
 from dotenv import load_dotenv
 
 from traffic_monitor import TomTomClient, TrafficMonitor, append_sample, plot_anomaly_to_png
@@ -56,12 +57,15 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     vapid_private_key = os.getenv("VAPID_PRIVATE_KEY", "")
     vapid_mailto = os.getenv("VAPID_MAILTO", "mailto:user@example.com")
+    ntfy_topic = os.getenv("NTFY_TOPIC", "")
     if vapid_private_key:
         notifier = make_push_notifier(
             push_sub_path,
             vapid_private_key=vapid_private_key,
             vapid_claims={"sub": vapid_mailto},
         )
+    elif ntfy_topic:
+        notifier = lambda msg: requests.post(f"https://ntfy.sh/{ntfy_topic}", data=msg.encode())
     else:
         notifier = lambda msg: log(f"[NOTIFY] {msg}")
 
