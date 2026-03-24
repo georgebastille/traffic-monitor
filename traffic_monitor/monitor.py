@@ -8,10 +8,8 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import googlemaps
-import requests
 from googlemaps import convert
 
-NTFY_TOPIC = "traffic_monitor"
 DEFAULT_WAYPOINT_COUNT = 3
 ROUTE_BASELINE_PATH = Path("traffic_route_baseline.json")
 
@@ -52,14 +50,12 @@ class TrafficMonitor:
         *,
         timezone: str = "Europe/London",
         notifier: Callable[[str], None] | None = None,
-        topic: str = NTFY_TOPIC,
         via_waypoints: Sequence[tuple[float, float]] | None = None,
         route_cache_path: Path | str = ROUTE_BASELINE_PATH,
     ) -> None:
         self._client = client
         self._zone = ZoneInfo(timezone)
-        self._topic = topic
-        self._notifier = notifier or (lambda msg: requests.post(f"https://ntfy.sh/{self._topic}", data=msg.encode()))
+        self._notifier = notifier or (lambda msg: None)
         self._via_waypoints: list[tuple[float, float]] | None = list(via_waypoints) if via_waypoints else None
         self._route_cache_path = Path(route_cache_path)
 
@@ -69,14 +65,12 @@ class TrafficMonitor:
         api_key: str,
         *,
         timezone: str = "Europe/London",
-        topic: str = NTFY_TOPIC,
         via_waypoints: Sequence[tuple[float, float]] | None = None,
         route_cache_path: Path | str = ROUTE_BASELINE_PATH,
     ) -> "TrafficMonitor":
         return cls(
             googlemaps.Client(key=api_key),
             timezone=timezone,
-            topic=topic,
             via_waypoints=via_waypoints,
             route_cache_path=route_cache_path,
         )
@@ -87,14 +81,12 @@ class TrafficMonitor:
         api_key: str,
         *,
         timezone: str = "Europe/London",
-        topic: str = NTFY_TOPIC,
         via_waypoints: Sequence[tuple[float, float]] | None = None,
         route_cache_path: Path | str = ROUTE_BASELINE_PATH,
     ) -> "TrafficMonitor":
         return cls.from_google_api_key(
             api_key,
             timezone=timezone,
-            topic=topic,
             via_waypoints=via_waypoints,
             route_cache_path=route_cache_path,
         )

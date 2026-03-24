@@ -199,7 +199,7 @@ def test_notify_uses_injected_sender() -> None:
     def fake_sender(message: str) -> None:
         captured.append(message)
 
-    monitor = TrafficMonitor(client, timezone="UTC", topic="custom-topic", notifier=fake_sender)
+    monitor = TrafficMonitor(client, timezone="UTC", notifier=fake_sender)
     monitor.notify("hello world")
     assert captured == ["hello world"]
 

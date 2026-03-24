@@ -1,50 +1,34 @@
 from __future__ import annotations
 
 import os
-import argparse
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo
 
+import requests
 from dotenv import load_dotenv
 
 from traffic_monitor import TomTomClient, TrafficMonitor, append_sample, plot_anomaly_to_png
 from traffic_monitor.analytics import compute_bucket_ema_baseline, filter_recent_weekday_samples, load_samples, prune_jsonl_history
+from traffic_monitor.config import AppConfig
 from traffic_monitor.notifications import PatternAlertDecision, evaluate_departure_notification, evaluate_pattern_alert
+from traffic_monitor.push import make_push_notifier
 from traffic_monitor.state import NotificationState
 
-HOME_ORIGIN = "164 Devonshire Road, London SE23 3SZ"
-SCHOOL_DESTINATION = "Rosemead Preparatory School, 70 Thurlow Park Road, London SE21 8HZ"
-TRAFFIC_JSONL = Path("traffic_report.jsonl")
-TRAFFIC_PNG = Path("traffic_report_anomaly.png")
-ARRIVAL_TIME = time(8, 20)
 DEPARTURE_LEAD = timedelta(minutes=30)
-STATE_PATH = Path("traffic_notification_state.json")
-TIMEZONE = ZoneInfo("Europe/London")
 
 
 def log(message: str) -> None:
     print(f"[{datetime.now().isoformat()}] {message}")
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Traffic monitor")
-    parser.add_argument(
-        "--provider",
-        choices=["google", "tomtom"],
-        default="tomtom",
-        help="Routing provider to use (default: google)",
-    )
-    return parser.parse_args(list(argv) if argv is not None else None)
-
-
-def _resolve_target_arrival(now: datetime) -> datetime:
+def _resolve_target_arrival(now: datetime, arrival_time: time, timezone: ZoneInfo) -> datetime:
     target_date = now.date()
-    candidate = datetime.combine(target_date, ARRIVAL_TIME, tzinfo=TIMEZONE)
+    candidate = datetime.combine(target_date, arrival_time, tzinfo=timezone)
     if now > candidate:
         next_day = _next_weekday(target_date + timedelta(days=1))
-        candidate = datetime.combine(next_day, ARRIVAL_TIME, tzinfo=TIMEZONE)
+        candidate = datetime.combine(next_day, arrival_time, tzinfo=timezone)
     return candidate
 
 
@@ -56,35 +40,75 @@ def _next_weekday(start: date) -> date:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    args = parse_args(argv)
     load_dotenv()
-    if args.provider == "google":
+
+    data_dir = Path(os.getenv("DATA_DIR", "."))
+    config_path = data_dir / "routes.json"
+    config = AppConfig.load(config_path)
+
+    route = config.active_route
+    if route is None:
+        log("No active route configured. Exiting.")
+        return
+
+    timezone = ZoneInfo(route.timezone)
+    route_cache = data_dir / f"{route.id}_baseline.json"
+    push_sub_path = data_dir / "push_subscription.json"
+
+    vapid_private_key = os.getenv("VAPID_PRIVATE_KEY", "")
+    vapid_mailto = os.getenv("VAPID_MAILTO", "mailto:user@example.com")
+    ntfy_topic = os.getenv("NTFY_TOPIC", "")
+    if vapid_private_key:
+        notifier = make_push_notifier(
+            push_sub_path,
+            vapid_private_key=vapid_private_key,
+            vapid_claims={"sub": vapid_mailto},
+        )
+    elif ntfy_topic:
+        notifier = lambda msg: requests.post(f"https://ntfy.sh/{ntfy_topic}", data=msg.encode())
+    else:
+        notifier = lambda msg: log(f"[NOTIFY] {msg}")
+
+    if route.provider == "google":
         api_key = os.getenv("GOOGLE_MAPS_API_KEY")
         if not api_key:
             raise RuntimeError("GOOGLE_MAPS_API_KEY is not set")
-        monitor = TrafficMonitor.from_google_api_key(api_key)
+        monitor = TrafficMonitor.from_google_api_key(
+            api_key,
+            timezone=route.timezone,
+            route_cache_path=route_cache,
+            notifier=notifier,
+        )
     else:
         api_key = os.getenv("TOMTOM_API_KEY")
         if not api_key:
             raise RuntimeError("TOMTOM_API_KEY is not set")
         monitor = TrafficMonitor(
-            TomTomClient(api_key, timezone="Europe/London"),
-            timezone="Europe/London",
-    )
-    current_sample = monitor.get_traffic_data(HOME_ORIGIN, SCHOOL_DESTINATION)
-    append_sample(TRAFFIC_JSONL, current_sample)
-    plot_anomaly_to_png(TRAFFIC_JSONL, TRAFFIC_PNG)
-    log(f"Updated baseline series at {TRAFFIC_JSONL}")
-    now = datetime.now(TIMEZONE)
+            TomTomClient(api_key, timezone=route.timezone),
+            timezone=route.timezone,
+            route_cache_path=route_cache,
+            notifier=notifier,
+        )
+
+    traffic_jsonl = data_dir / f"{route.id}_traffic.jsonl"
+    traffic_png = data_dir / f"{route.id}_anomaly.png"
+    state_path = data_dir / f"{route.id}_state.json"
+    arrival_time = time.fromisoformat(route.arrival_time)
+
+    current_sample = monitor.get_traffic_data(route.origin, route.destination)
+    append_sample(traffic_jsonl, current_sample)
+    plot_anomaly_to_png(traffic_jsonl, traffic_png)
+    log(f"Updated baseline series at {traffic_jsonl}")
+    now = datetime.now(timezone)
 
     cutoff = now - timedelta(days=14)
-    removed = prune_jsonl_history(TRAFFIC_JSONL, cutoff=cutoff)
+    removed = prune_jsonl_history(traffic_jsonl, cutoff=cutoff)
     if removed:
-        log(f"Pruned {removed} entries older than {cutoff.date()} from {TRAFFIC_JSONL}")
+        log(f"Pruned {removed} entries older than {cutoff.date()} from {traffic_jsonl}")
 
-    target_arrival = _resolve_target_arrival(now)
+    target_arrival = _resolve_target_arrival(now, arrival_time, timezone)
 
-    traffic_samples = load_samples(TRAFFIC_JSONL, tzinfo=TIMEZONE)
+    traffic_samples = load_samples(traffic_jsonl, tzinfo=timezone)
     historical_samples = [sample for sample in traffic_samples if sample.query_time < current_sample.query_time]
     recent_samples = filter_recent_weekday_samples(historical_samples, reference=now)
     baseline_duration = compute_bucket_ema_baseline(
@@ -95,12 +119,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         ema_span=5,
     ) or current_sample.traffic_duration_mins
 
-    state = NotificationState.load(STATE_PATH)
+    state = NotificationState.load(state_path)
     state_changed = False
 
     departure_notice = evaluate_departure_notification(
         now=now,
-        arrival_time=ARRIVAL_TIME,
+        arrival_time=arrival_time,
         target_arrival=target_arrival,
         current_duration_mins=current_sample.traffic_duration_mins,
         baseline_duration_mins=baseline_duration,
@@ -152,8 +176,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         log("Sent pattern change notification")
 
     if state_changed:
-        state.save(STATE_PATH)
-        log(f"Persisted notification state at {STATE_PATH}")
+        state.save(state_path)
+        log(f"Persisted notification state at {state_path}")
 
 
 if __name__ == "__main__":

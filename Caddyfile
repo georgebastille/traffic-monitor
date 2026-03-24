@@ -1,0 +1,15 @@
+# Replace YOURDOMAIN with your DuckDNS subdomain (e.g. richie-traffic.duckdns.org)
+# Replace DUCKDNS_TOKEN with your DuckDNS token
+#
+# Build Caddy with DuckDNS plugin:
+#   xcaddy build --with github.com/caddy-dns/duckdns
+#
+# Then: sudo cp caddy /usr/local/bin/caddy
+
+YOURDOMAIN.duckdns.org {
+    reverse_proxy localhost:8000
+
+    tls {
+        dns duckdns DUCKDNS_TOKEN
+    }
+}
