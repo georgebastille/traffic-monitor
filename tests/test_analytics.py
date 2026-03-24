@@ -216,6 +216,7 @@ def test_compute_bucket_ema_baseline_averages_same_day_bucket() -> None:
     baseline = compute_bucket_ema_baseline(
         samples,
         target_departure=base + timedelta(days=2),
+        baseline_percentile=50,
     )
 
     # First day values should average to 21, then EMA towards 24.

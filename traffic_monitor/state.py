@@ -12,6 +12,7 @@ class NotificationState:
     departure_date: date | None = None
     departure_minutes: float | None = None
     pattern_alert_date: date | None = None
+    pattern_alert_timestamp: datetime | None = None
     anomaly_integral_high: float = 0.0
     anomaly_integral_low: float = 0.0
     anomaly_last_timestamp: datetime | None = None
@@ -31,6 +32,7 @@ class NotificationState:
             departure_date=_parse_date(payload.get("departure_date")),
             departure_minutes=_parse_float(payload.get("departure_minutes")),
             pattern_alert_date=_parse_date(payload.get("pattern_alert_date")),
+            pattern_alert_timestamp=_parse_datetime(payload.get("pattern_alert_timestamp")),
             anomaly_integral_high=high if high is not None else 0.0,
             anomaly_integral_low=low if low is not None else 0.0,
             anomaly_last_timestamp=_parse_datetime(payload.get("anomaly_last_timestamp")),
@@ -46,6 +48,8 @@ class NotificationState:
             payload["departure_minutes"] = self.departure_minutes
         if self.pattern_alert_date:
             payload["pattern_alert_date"] = self.pattern_alert_date.isoformat()
+        if self.pattern_alert_timestamp:
+            payload["pattern_alert_timestamp"] = self.pattern_alert_timestamp.isoformat()
         if self.anomaly_integral_high:
             payload["anomaly_integral_high"] = self.anomaly_integral_high
         if self.anomaly_integral_low:

@@ -154,9 +154,9 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     threshold_env = os.getenv("TRAFFIC_ANOMALY_THRESHOLD")
     try:
-        integral_threshold = float(threshold_env) if threshold_env else 180.0
+        integral_threshold = float(threshold_env) if threshold_env else 90.0
     except ValueError:
-        integral_threshold = 180.0
+        integral_threshold = 90.0
         log(f"Ignoring invalid TRAFFIC_ANOMALY_THRESHOLD={threshold_env!r}")
 
     deadband_env = os.getenv("TRAFFIC_ANOMALY_DEADBAND")
@@ -173,6 +173,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         anomaly_decay = 120.0
         log(f"Ignoring invalid TRAFFIC_ANOMALY_DECAY_MINUTES={decay_env!r}")
 
+    cooldown_env = os.getenv("TRAFFIC_ALERT_COOLDOWN_MINUTES")
+    try:
+        alert_cooldown = float(cooldown_env) if cooldown_env else 120.0
+    except ValueError:
+        alert_cooldown = 120.0
+        log(f"Ignoring invalid TRAFFIC_ALERT_COOLDOWN_MINUTES={cooldown_env!r}")
+
     pattern_decision: PatternAlertDecision = evaluate_pattern_alert(
         sample_time=current_sample.query_time,
         current_duration_mins=current_sample.traffic_duration_mins,
@@ -181,6 +188,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         integral_threshold=integral_threshold,
         deadband_minutes=anomaly_deadband,
         decay_minutes=anomaly_decay,
+        cooldown_minutes=alert_cooldown,
     )
     if pattern_decision.state_changed:
         state_changed = True

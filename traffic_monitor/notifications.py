@@ -64,13 +64,22 @@ def evaluate_pattern_alert(
     baseline_duration_mins: float | None,
     state: NotificationState,
     deadband_minutes: float = 2.0,
-    integral_threshold: float = 180.0,
+    integral_threshold: float = 90.0,
     decay_minutes: float = 120.0,
+    cooldown_minutes: float = 120.0,
     sample_interval_minutes: float = 5.0,
     max_sample_gap_minutes: float = 15.0,
 ) -> PatternAlertDecision:
     """
     Integrate deviations between the current duration and baseline to detect sustained anomalies.
+
+    Fires when the time-weighted deviation integral exceeds ``integral_threshold``
+    (default 90 minute-minutes ≈ 30 min of +5 min traffic). After firing, a
+    ``cooldown_minutes`` window must pass before re-alerting, allowing genuine
+    second events later in the day to be reported.
+
+    The integral is reset to zero at day boundaries so morning events never
+    contaminate the next day's accumulation.
     """
     if baseline_duration_mins is None or baseline_duration_mins <= 0:
         return PatternAlertDecision(message=None, state_changed=False)
@@ -79,6 +88,15 @@ def evaluate_pattern_alert(
 
     state_changed = False
     now = sample_time
+
+    # Reset integral at day boundaries so each school-run day starts clean.
+    if (
+        state.anomaly_last_timestamp is not None
+        and state.anomaly_last_timestamp.date() < sample_time.date()
+    ):
+        state.anomaly_integral_high = 0.0
+        state.anomaly_integral_low = 0.0
+        state_changed = True
 
     # Determine elapsed minutes since the last observation we incorporated.
     if state.anomaly_last_timestamp is not None:
@@ -130,14 +148,19 @@ def evaluate_pattern_alert(
     if integral_value < integral_threshold:
         return PatternAlertDecision(message=None, state_changed=state_changed)
 
-    if state.pattern_alert_date == now.date():
-        return PatternAlertDecision(message=None, state_changed=state_changed)
+    # Cooldown: require ``cooldown_minutes`` to elapse since last alert so that
+    # a genuine second event later in the day can still fire.
+    if state.pattern_alert_timestamp is not None:
+        mins_since_alert = (sample_time - state.pattern_alert_timestamp).total_seconds() / 60.0
+        if mins_since_alert < cooldown_minutes:
+            return PatternAlertDecision(message=None, state_changed=state_changed)
 
     message = (
-        f"Traffic pattern changed: sustained {direction} travel times "
+        f"Traffic alert: sustained {direction} travel times "
         f"by ~{abs(deviation):.1f} mins (baseline {baseline_duration_mins:.1f} mins)."
     )
     state.pattern_alert_date = now.date()
+    state.pattern_alert_timestamp = now
     state.anomaly_integral_high = 0.0
     state.anomaly_integral_low = 0.0
     state_changed = True
