@@ -101,7 +101,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     log(f"Updated baseline series at {traffic_jsonl}")
     now = datetime.now(timezone)
 
-    cutoff = now - timedelta(days=14)
+    history_days_env = os.getenv("HISTORY_DAYS")
+    try:
+        history_days = int(history_days_env) if history_days_env else 90
+    except ValueError:
+        history_days = 90
+        log(f"Ignoring invalid HISTORY_DAYS={history_days_env!r}")
+    cutoff = now - timedelta(days=history_days)
     removed = prune_jsonl_history(traffic_jsonl, cutoff=cutoff)
     if removed:
         log(f"Pruned {removed} entries older than {cutoff.date()} from {traffic_jsonl}")
@@ -111,12 +117,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     traffic_samples = load_samples(traffic_jsonl, tzinfo=timezone)
     historical_samples = [sample for sample in traffic_samples if sample.query_time < current_sample.query_time]
     recent_samples = filter_recent_weekday_samples(historical_samples, reference=now)
+    percentile_env = os.getenv("BASELINE_PERCENTILE")
+    try:
+        baseline_percentile = int(percentile_env) if percentile_env else 75
+    except ValueError:
+        baseline_percentile = 75
+        log(f"Ignoring invalid BASELINE_PERCENTILE={percentile_env!r}")
+
     baseline_duration = compute_bucket_ema_baseline(
         recent_samples,
         target_departure=current_sample.departure_time,
         max_weekdays=5,
         bucket_minutes=5,
-        ema_span=5,
+        ema_span=3,
+        baseline_percentile=baseline_percentile,
     ) or current_sample.traffic_duration_mins
 
     state = NotificationState.load(state_path)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import statistics
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -83,15 +84,20 @@ def compute_bucket_ema_baseline(
     target_departure: datetime,
     max_weekdays: int = 5,
     bucket_minutes: int = 5,
-    ema_span: int = 5,
+    ema_span: int = 3,
+    baseline_percentile: int = 75,
 ) -> float | None:
     """
-    Compute an exponential moving average baseline for the target departure bucket.
+    Compute a baseline travel time for the target departure bucket.
 
-    The EMA is calculated from the most recent ``max_weekdays`` weekday samples
-    that fall into the same time-of-day bucket as ``target_departure``. Weekends
-    and the target day itself are excluded so the baseline reflects historical
-    behaviour only.
+    By default uses the P75 across the most recent ``max_weekdays`` weekday
+    samples in the same time-of-day bucket, giving a conservative estimate
+    that is exceeded only ~25% of the time.
+
+    When ``baseline_percentile`` is 50 the original behaviour is restored:
+    EMA of daily medians with span ``ema_span``.
+
+    Weekends and the target day itself are always excluded.
     """
     if max_weekdays <= 0:
         raise ValueError("max_weekdays must be positive")
@@ -99,6 +105,8 @@ def compute_bucket_ema_baseline(
         raise ValueError("bucket_minutes must be positive")
     if ema_span <= 0:
         raise ValueError("ema_span must be positive")
+    if not (1 <= baseline_percentile <= 99):
+        raise ValueError("baseline_percentile must be between 1 and 99")
 
     bucket = _bucket_index(target_departure, bucket_minutes)
     target_date = target_departure.date()
@@ -118,8 +126,16 @@ def compute_bucket_ema_baseline(
         return None
     ordered_days = sorted(by_day.keys())
     recent_days = ordered_days[-max_weekdays:]
-    values = [statistics.fmean(by_day[day]) for day in recent_days]
-    return _compute_ema(values, span=ema_span)
+
+    if baseline_percentile == 50:
+        values = [statistics.fmean(by_day[day]) for day in recent_days]
+        return _compute_ema(values, span=ema_span)
+
+    all_values = sorted(v for day in recent_days for v in by_day[day])
+    if len(all_values) == 1:
+        return all_values[0]
+    idx = int(math.ceil(baseline_percentile / 100 * len(all_values))) - 1
+    return all_values[max(0, min(idx, len(all_values) - 1))]
 
 
 def minutes_since_midnight(moment: datetime) -> float:
