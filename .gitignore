@@ -16,3 +16,6 @@ cron.log
 traffic_route_baseline.json
 traffic_notification_state.json
 .ipynb_checkpoints/
+data/*_baseline.json
+data/*_state.json
+push_subscription.json
