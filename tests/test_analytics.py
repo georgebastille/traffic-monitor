@@ -170,13 +170,14 @@ def test_compute_time_of_day_stats_filters_by_tolerance() -> None:
 def test_compute_bucket_ema_baseline_uses_last_five_weekdays() -> None:
     base = datetime(2024, 10, 7, 8, 0, tzinfo=timezone.utc)  # Monday
     durations = [20.0, 21.0, 19.0, 18.0, 22.0, 25.0]  # Mon -> next Mon
+    day_offsets = [0, 1, 2, 3, 4, 7]  # skip the weekend
     samples = [
         make_sample(
-            query_time=base + timedelta(days=index),
-            departure_time=base + timedelta(days=index),
+            query_time=base + timedelta(days=offset),
+            departure_time=base + timedelta(days=offset),
             duration=duration,
         )
-        for index, duration in enumerate(durations)
+        for offset, duration in zip(day_offsets, durations)
     ]
     target_departure = base + timedelta(days=8)  # Tuesday following the last sample
 
@@ -186,11 +187,15 @@ def test_compute_bucket_ema_baseline_uses_last_five_weekdays() -> None:
         max_weekdays=5,
         bucket_minutes=5,
         ema_span=5,
+        baseline_percentile=50,
     )
 
     assert baseline is not None
     # Manually calculated EMA over last 5 weekdays (Tue->Mon with alpha=1/3)
     assert baseline == pytest.approx(21.91, abs=0.01)
+
+    # Default P75: nearest-rank over the same five days [18, 19, 21, 22, 25].
+    assert compute_bucket_ema_baseline(samples, target_departure=target_departure) == pytest.approx(22.0)
 
 
 def test_compute_bucket_ema_baseline_averages_same_day_bucket() -> None:

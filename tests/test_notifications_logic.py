@@ -79,43 +79,36 @@ def test_departure_notification_only_resends_for_earlier_times() -> None:
     assert earlier is not None
 
 
-def test_pattern_alert_only_once_per_day() -> None:
+def test_pattern_alert_respects_cooldown() -> None:
     baseline = 12.0
     start = datetime(2024, 10, 10, 7, 30, tzinfo=ZONE)
     state = NotificationState()
 
-    first: PatternAlertDecision = evaluate_pattern_alert(
-        sample_time=start,
-        current_duration_mins=17.0,
-        baseline_duration_mins=baseline,
-        state=state,
-        integral_threshold=180.0,
-        deadband_minutes=2.0,
-    )
+    def step(offset_minutes: float, duration: float) -> PatternAlertDecision:
+        return evaluate_pattern_alert(
+            sample_time=start + timedelta(minutes=offset_minutes),
+            current_duration_mins=duration,
+            baseline_duration_mins=baseline,
+            state=state,
+            integral_threshold=25.0,
+            deadband_minutes=2.0,
+            cooldown_minutes=120.0,
+        )
+
+    first = step(0, 17.0)  # integral 15
     assert first.message is None
     assert first.state_changed
 
-    second: PatternAlertDecision = evaluate_pattern_alert(
-        sample_time=start + timedelta(minutes=5),
-        current_duration_mins=17.2,
-        baseline_duration_mins=baseline,
-        state=state,
-        integral_threshold=180.0,
-        deadband_minutes=2.0,
-    )
+    second = step(5, 17.2)  # ~14.4 decayed + 16 crosses 25
     assert second.message is not None
-    assert "Traffic pattern changed" in second.message
+    assert "sustained longer" in second.message
     assert state.pattern_alert_date == start.date()
 
-    third: PatternAlertDecision = evaluate_pattern_alert(
-        sample_time=start + timedelta(minutes=10),
-        current_duration_mins=17.5,
-        baseline_duration_mins=baseline,
-        state=state,
-        integral_threshold=180.0,
-        deadband_minutes=2.0,
-    )
+    third = step(10, 30.0)  # well over threshold but inside the cooldown
     assert third.message is None
+
+    fourth = step(130, 30.0)  # cooldown elapsed: a second event the same day can fire
+    assert fourth.message is not None
 
 
 def minutes(target_arrival: datetime, duration: float) -> float:
