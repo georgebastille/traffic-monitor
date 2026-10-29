@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from traffic_monitor.monitor import TrafficMonitor, TrafficSample, append_sample
-from traffic_monitor.plotting import plot_anomaly_to_png, plot_to_png
+from traffic_monitor.plotting import plot_anomaly_to_png
 
 
 class FakeClient:
@@ -114,36 +114,6 @@ def test_append_sample_writes_json(tmp_path: Path) -> None:
     assert record["origin"] == "Origin"
 
 
-def test_plot_to_png_creates_chart(tmp_path: Path) -> None:
-    jsonl_path = tmp_path / "traffic.jsonl"
-    png_path = tmp_path / "traffic.png"
-    samples = [
-        TrafficSample(
-            query_time=datetime(2024, 10, 8, 7, 0, tzinfo=timezone.utc),
-            departure_time=datetime(2024, 10, 8, 7, 0, tzinfo=timezone.utc),
-            origin="Origin",
-            destination="Destination",
-            clear_duration_mins=12.0,
-            traffic_duration_mins=18.0,
-        ),
-        TrafficSample(
-            query_time=datetime(2024, 10, 9, 7, 5, tzinfo=timezone.utc),
-            departure_time=datetime(2024, 10, 9, 7, 5, tzinfo=timezone.utc),
-            origin="Origin",
-            destination="Destination",
-            clear_duration_mins=11.0,
-            traffic_duration_mins=17.5,
-        ),
-    ]
-    for sample in samples:
-        append_sample(jsonl_path, sample)
-
-    result = plot_to_png(jsonl_path, png_path)
-
-    assert result == png_path
-    assert png_path.exists()
-
-
 def test_plot_anomaly_to_png_creates_chart(tmp_path: Path) -> None:
     jsonl_path = tmp_path / "arrival.jsonl"
     png_path = tmp_path / "arrival.png"
@@ -227,7 +197,7 @@ def test_plotting_handles_mixed_timezone_strings(tmp_path: Path) -> None:
     ]
     jsonl_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
 
-    result = plot_to_png(jsonl_path, png_path)
+    result = plot_anomaly_to_png(jsonl_path, png_path)
 
     assert result == png_path
     assert png_path.exists()

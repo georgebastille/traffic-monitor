@@ -1,37 +1,26 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
-import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.dates import DateFormatter, HourLocator
+from matplotlib.figure import Figure
 
 
-def plot_to_png(jsonl_filename: Path | str, output_png: Path | str) -> Path:
-    """Plot historical clear vs traffic durations and save as PNG."""
-    jsonl_path = Path(jsonl_filename)
-    output_path = Path(output_png)
-    frame = _load_frame(jsonl_path)
-    frame = frame.set_index("query_time")
-    axis = frame[["clear_duration_mins", "traffic_duration_mins"]].plot(
-        title="Traffic Duration Over Time",
-        ylabel="Duration (minutes)",
-        xlabel="Time",
-        figsize=(10, 6),
-    )
-    axis.grid(True)
-    figure = axis.get_figure()
-    figure.savefig(output_path)
-    plt.close(figure)
-    return output_path
-
-
-def plot_anomaly_to_png(jsonl_filename: Path | str, output_png: Path | str) -> Path:
+def plot_anomaly_to_png(
+    jsonl_filename: Path | str,
+    output_png: Path | str,
+    *,
+    timezone: str = "Europe/London",
+) -> Path:
     """Render a weekday baseline vs. today's traffic line chart."""
     jsonl_path = Path(jsonl_filename)
     output_path = Path(output_png)
-    frame = _load_frame(jsonl_path)
+    frame = _load_frame(jsonl_path, timezone)
     frame["date"] = frame["query_time"].dt.date
     frame["dow"] = frame["query_time"].dt.dayofweek
     frame["time_bucket"] = frame["query_time"].dt.floor("5min")
@@ -63,7 +52,8 @@ def plot_anomaly_to_png(jsonl_filename: Path | str, output_png: Path | str) -> P
         .reindex(timeline)
     )
 
-    figure, axis = plt.subplots(figsize=(11, 5))
+    figure = Figure(figsize=(11, 5))
+    axis = figure.subplots()
     axis.plot(timeline, today_series, label="today (mins)")
     axis.plot(timeline, baseline_mean, linestyle="--", label="weekday baseline mean")
 
@@ -80,8 +70,7 @@ def plot_anomaly_to_png(jsonl_filename: Path | str, output_png: Path | str) -> P
     axis.grid(True, alpha=0.3)
     axis.legend()
     figure.tight_layout()
-    figure.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close(figure)
+    figure.savefig(output_path, dpi=200, bbox_inches="tight", format="png")
     return output_path
 
 
@@ -92,28 +81,21 @@ def _timeline_lookup(timeline: Iterable[pd.Timestamp], source_series: pd.Series)
     return pd.Series(times, index=timeline).map(lookup)
 
 
-def _load_frame(jsonl_path: Path) -> pd.DataFrame:
-    frame = pd.read_json(jsonl_path, lines=True)
-    if frame.empty:
+def _load_frame(jsonl_path: Path, timezone: str) -> pd.DataFrame:
+    """Load query times as naive local wall time; legacy naive timestamps are taken as already local."""
+    zone = ZoneInfo(timezone)
+    rows: list[tuple[datetime, float]] = []
+    with jsonl_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                payload = json.loads(line)
+                moment = datetime.fromisoformat(str(payload["query_time"]))
+                duration = float(payload["traffic_duration_mins"])
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+            if moment.tzinfo is not None:
+                moment = moment.astimezone(zone).replace(tzinfo=None)
+            rows.append((moment, duration))
+    if not rows:
         raise ValueError(f"No data available in {jsonl_path}")
-    frame["query_time"] = _normalize_query_time(frame["query_time"])
-    return frame
-
-
-def _normalize_query_time(series: pd.Series) -> pd.Series:
-    """Handle legacy naive timestamps and newer timezone-aware ISO strings."""
-    raw = series.astype(str)
-    tz_mask = raw.str.contains(r"(?:Z|[+-]\d{2}:\d{2})$", na=False)
-    normalized = pd.Series(index=series.index, dtype="datetime64[ns]")
-
-    if tz_mask.any():
-        aware_idx = pd.to_datetime(raw[tz_mask], format="ISO8601")
-        aware_values = [pd.Timestamp(value).to_pydatetime().replace(tzinfo=None) for value in aware_idx]
-        normalized.loc[tz_mask] = aware_values
-
-    if (~tz_mask).any():
-        naive_idx = pd.to_datetime(raw[~tz_mask], format="ISO8601")
-        naive_values = [pd.Timestamp(value).to_pydatetime() for value in naive_idx]
-        normalized.loc[~tz_mask] = naive_values
-
-    return normalized.astype("datetime64[ns]")
+    return pd.DataFrame(rows, columns=["query_time", "traffic_duration_mins"])

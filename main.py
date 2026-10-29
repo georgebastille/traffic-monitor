@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import requests
 from dotenv import load_dotenv
 
-from traffic_monitor import TomTomClient, TrafficMonitor, append_sample, plot_anomaly_to_png
+from traffic_monitor import TomTomClient, TrafficMonitor, append_sample
 from traffic_monitor.analytics import (
     compute_bucket_ema_baseline,
     filter_recent_weekday_samples,
@@ -96,14 +96,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
 
     traffic_jsonl = data_dir / f"{route.id}_traffic.jsonl"
-    traffic_png = data_dir / f"{route.id}_anomaly.png"
     state_path = data_dir / f"{route.id}_state.json"
     arrival_time = time.fromisoformat(route.arrival_time)
 
     current_sample = monitor.get_traffic_data(route.origin, route.destination)
     append_sample(traffic_jsonl, current_sample)
-    plot_anomaly_to_png(traffic_jsonl, traffic_png)
-    log(f"Updated baseline series at {traffic_jsonl}")
+    log(f"Appended sample to {traffic_jsonl}")
     now = datetime.now(timezone)
 
     target_arrival = _resolve_target_arrival(now, arrival_time, timezone)
