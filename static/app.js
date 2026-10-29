@@ -148,24 +148,11 @@ $("refresh-btn").addEventListener("click", refresh);
 // ---------------------------------------------------------------------------
 // Chart: today's line against the typical line and usual range
 // ---------------------------------------------------------------------------
-// Each bucket's typical/range comes from ~5 readings, so one slow day makes a spike. Smooth the
-// reference series over 15 minutes for display; the verdict card uses the exact values.
-function smooth(values, radius = 1) {
-  return values.map((value, i) => {
-    if (value == null) return null;
-    const window = values.slice(Math.max(0, i - radius), i + radius + 1).filter((v) => v != null);
-    return window.reduce((sum, v) => sum + v, 0) / window.length;
-  });
-}
-
 function chartPoints(chart) {
-  const typical = smooth(chart.typical);
-  const low = smooth(chart.low);
-  const high = smooth(chart.high);
   const points = [];
   chart.minutes.forEach((minute, i) => {
     if (minute < CHART_START || minute >= CHART_END) return;
-    points.push({ minute, today: chart.today[i], typical: typical[i], low: low[i], high: high[i] });
+    points.push({ minute, today: chart.today[i], typical: chart.typical[i], low: chart.low[i], high: chart.high[i] });
   });
   return points;
 }

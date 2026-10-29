@@ -6,7 +6,7 @@ from typing import Sequence
 from zoneinfo import ZoneInfo
 
 from traffic_monitor.analytics import (
-    compute_bucket_ema_baseline,
+    compute_bucket_baseline,
     filter_recent_weekday_samples,
     predict_departure_duration,
 )
@@ -17,7 +17,12 @@ from traffic_monitor.settings import Settings
 
 @dataclass(frozen=True)
 class Assessment:
-    """How traffic compares with usual right now, and when to leave for the next arrival."""
+    """
+    How traffic compares with usual right now, and when to leave for the next arrival.
+
+    ``typical_mins`` is the median (what change alerts compare against);
+    ``departure_typical_mins`` is the cautious P75 the leave-by time is built on.
+    """
 
     current_mins: float
     typical_mins: float
@@ -40,21 +45,23 @@ def assess(
 ) -> Assessment:
     """Shared by the 5-minute monitor (for notifications) and the API (for the app)."""
     recent = filter_recent_weekday_samples(history, reference=now)
-    typical = (
-        compute_bucket_ema_baseline(
-            recent,
-            target_departure=current.departure_time,
-            baseline_percentile=settings.baseline_percentile,
+
+    def baseline(target: datetime, percentile: int) -> float | None:
+        return compute_bucket_baseline(
+            recent, target_departure=target, percentile=percentile, window_minutes=settings.baseline_window_minutes
         )
-        or current.traffic_duration_mins
-    )
+
+    current_mins = current.traffic_duration_mins
+    typical = baseline(current.departure_time, settings.alert_percentile) or current_mins
+    departure_now = baseline(current.departure_time, settings.departure_percentile) or current_mins
     target_arrival = resolve_target_arrival(now, arrival_time, zone)
     predicted, departure_typical = predict_departure_duration(
         recent,
-        current_duration_mins=current.traffic_duration_mins,
-        current_baseline_mins=typical,
+        current_duration_mins=current_mins,
+        current_baseline_mins=departure_now,
         target_arrival=target_arrival,
-        baseline_percentile=settings.baseline_percentile,
+        percentile=settings.departure_percentile,
+        window_minutes=settings.baseline_window_minutes,
     )
     thresholds = {"orange_mins": settings.orange_mins, "red_mins": settings.red_mins}
     return Assessment(

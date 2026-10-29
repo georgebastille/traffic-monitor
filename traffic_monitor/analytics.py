@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import statistics
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -67,43 +66,35 @@ def filter_recent_weekday_samples(
     return [sample for sample in samples if sample.query_time >= cutoff and sample.departure_time.weekday() < 5]
 
 
-def compute_bucket_ema_baseline(
+def compute_bucket_baseline(
     samples: Sequence[TrafficSample],
     *,
     target_departure: datetime,
+    percentile: int = 75,
+    window_minutes: int = 0,
     max_weekdays: int = 5,
     bucket_minutes: int = 5,
-    ema_span: int = 3,
-    baseline_percentile: int = 75,
 ) -> float | None:
     """
-    Compute a baseline travel time for the target departure bucket.
+    Baseline travel time for ``target_departure``'s time of day.
 
-    By default uses the P75 across the most recent ``max_weekdays`` weekday
-    samples in the same time-of-day bucket, giving a conservative estimate
-    that is exceeded only ~25% of the time.
-
-    When ``baseline_percentile`` is 50 the original behaviour is restored:
-    EMA of daily medians with span ``ema_span``.
-
-    Weekends and the target day itself are always excluded.
+    The ``percentile`` (nearest rank) of every reading within ``±window_minutes`` of
+    that time of day on the most recent ``max_weekdays`` weekdays. Weekends and the
+    target day itself are excluded. With a 10-minute window that is ~25 readings
+    rather than ~5, which halves how often the leave-by time came out 4+ minutes
+    too late in a backtest over Mar-Oct 2026.
     """
     if max_weekdays <= 0:
         raise ValueError("max_weekdays must be positive")
     if bucket_minutes <= 0:
         raise ValueError("bucket_minutes must be positive")
-    if ema_span <= 0:
-        raise ValueError("ema_span must be positive")
-    if not (1 <= baseline_percentile <= 99):
-        raise ValueError("baseline_percentile must be between 1 and 99")
+    if not (1 <= percentile <= 99):
+        raise ValueError("percentile must be between 1 and 99")
 
-    bucket = _bucket_index(target_departure, bucket_minutes)
-    by_day = _group_weekday_buckets(samples, before=target_departure.date(), bucket_minutes=bucket_minutes).get(bucket)
-    if not by_day:
-        return None
-    return _bucket_baseline(
-        by_day, max_weekdays=max_weekdays, ema_span=ema_span, baseline_percentile=baseline_percentile
-    )
+    grouped = _group_weekday_buckets(samples, before=target_departure.date(), bucket_minutes=bucket_minutes)
+    by_day = _window_days(grouped, _bucket_index(target_departure, bucket_minutes), window_minutes // bucket_minutes)
+    values = _recent_values(by_day, max_weekdays)
+    return _nearest_rank(values, percentile) if values else None
 
 
 @dataclass(frozen=True)
@@ -117,27 +108,29 @@ def compute_bucket_profile(
     samples: Sequence[TrafficSample],
     *,
     day: date,
+    percentile: int = 75,
+    window_minutes: int = 0,
     max_weekdays: int = 5,
     bucket_minutes: int = 5,
-    ema_span: int = 3,
-    baseline_percentile: int = 75,
 ) -> dict[int, BucketStats]:
     """
     Baseline for every time-of-day bucket of ``day``, keyed by bucket start minute.
 
-    ``typical`` is exactly what :func:`compute_bucket_ema_baseline` returns for that
-    bucket; ``low``/``high`` span the same recent weekdays' values.
+    ``typical`` is exactly what :func:`compute_bucket_baseline` returns for that
+    bucket; ``low``/``high`` are the P25/P75 of the same readings (the usual range;
+    its top edge is the leave-by baseline).
     """
-    profile: dict[int, BucketStats] = {}
     grouped = _group_weekday_buckets(samples, before=day, bucket_minutes=bucket_minutes)
-    for bucket, by_day in grouped.items():
-        recent_days = sorted(by_day)[-max_weekdays:]
-        values = [value for recent in recent_days for value in by_day[recent]]
-        typical = _bucket_baseline(
-            by_day, max_weekdays=max_weekdays, ema_span=ema_span, baseline_percentile=baseline_percentile
-        )
-        if typical is not None:
-            profile[bucket * bucket_minutes] = BucketStats(typical=typical, low=min(values), high=max(values))
+    radius = window_minutes // bucket_minutes
+    profile: dict[int, BucketStats] = {}
+    for bucket in range(24 * 60 // bucket_minutes):
+        values = _recent_values(_window_days(grouped, bucket, radius), max_weekdays)
+        if values:
+            profile[bucket * bucket_minutes] = BucketStats(
+                typical=_nearest_rank(values, percentile),
+                low=_nearest_rank(values, 25),
+                high=_nearest_rank(values, 75),
+            )
     return profile
 
 
@@ -154,17 +147,22 @@ def _group_weekday_buckets(
     return grouped
 
 
-def _bucket_baseline(
-    by_day: dict[date, list[float]], *, max_weekdays: int, ema_span: int, baseline_percentile: int
-) -> float | None:
-    recent_days = sorted(by_day)[-max_weekdays:]
-    if baseline_percentile == 50:
-        return _compute_ema([statistics.fmean(by_day[day]) for day in recent_days], span=ema_span)
-    all_values = sorted(v for day in recent_days for v in by_day[day])
-    if len(all_values) == 1:
-        return all_values[0]
-    idx = int(math.ceil(baseline_percentile / 100 * len(all_values))) - 1
-    return all_values[max(0, min(idx, len(all_values) - 1))]
+def _window_days(grouped: dict[int, dict[date, list[float]]], bucket: int, radius: int) -> dict[date, list[float]]:
+    merged: dict[date, list[float]] = {}
+    for neighbour in range(bucket - radius, bucket + radius + 1):
+        for day, values in grouped.get(neighbour, {}).items():
+            merged.setdefault(day, []).extend(values)
+    return merged
+
+
+def _recent_values(by_day: dict[date, list[float]], max_weekdays: int) -> list[float]:
+    """Sorted readings from the most recent ``max_weekdays`` days."""
+    return sorted(value for day in sorted(by_day)[-max_weekdays:] for value in by_day[day])
+
+
+def _nearest_rank(sorted_values: list[float], percentile: int) -> float:
+    idx = int(math.ceil(percentile / 100 * len(sorted_values))) - 1
+    return sorted_values[max(0, min(idx, len(sorted_values) - 1))]
 
 
 def predict_departure_duration(
@@ -173,24 +171,28 @@ def predict_departure_duration(
     current_duration_mins: float,
     current_baseline_mins: float,
     target_arrival: datetime,
-    baseline_percentile: int = 75,
+    percentile: int = 75,
+    window_minutes: int = 0,
     iterations: int = 2,
 ) -> tuple[float, float]:
     """
     Predict the trip duration at the recommended departure time.
 
     Shifts the current duration by how much the baseline changes between now and
-    the departure bucket. Iterates because the departure time depends on the
-    predicted duration. Returns ``(predicted_mins, departure_baseline_mins)``,
-    falling back to the current values when the departure bucket has no history.
+    the departure bucket, so ``current_baseline_mins`` must use the same
+    ``percentile`` and ``window_minutes``. Iterates because the departure time
+    depends on the predicted duration. Returns ``(predicted_mins,
+    departure_baseline_mins)``, falling back to the current values when the
+    departure bucket has no history.
     """
     predicted = current_duration_mins
     departure_baseline = current_baseline_mins
     for _ in range(iterations):
-        baseline = compute_bucket_ema_baseline(
+        baseline = compute_bucket_baseline(
             samples,
             target_departure=target_arrival - timedelta(minutes=predicted),
-            baseline_percentile=baseline_percentile,
+            percentile=percentile,
+            window_minutes=window_minutes,
         )
         if baseline is None:
             return current_duration_mins, current_baseline_mins
@@ -251,15 +253,3 @@ def prune_jsonl_history(
 
 def _bucket_index(moment: datetime, bucket_minutes: int) -> int:
     return int(minutes_since_midnight(moment) // bucket_minutes)
-
-
-def _compute_ema(values: Sequence[float], *, span: int) -> float | None:
-    if not values:
-        return None
-    if span <= 1 or len(values) == 1:
-        return float(values[-1])
-    alpha = 2.0 / (span + 1.0)
-    ema = float(values[0])
-    for value in values[1:]:
-        ema = alpha * float(value) + (1.0 - alpha) * ema
-    return ema

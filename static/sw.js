@@ -1,6 +1,6 @@
 // Network first so app updates arrive immediately; the cache is only an offline fallback.
-const CACHE = "traffic-v3";
-const SHELL = ["/", "/app.js?v=3", "/manifest.json", "/icon-192.png"];
+const CACHE = "traffic-v4";
+const SHELL = ["/", "/app.js?v=4", "/manifest.json", "/icon-192.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));

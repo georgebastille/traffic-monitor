@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from traffic_monitor.analytics import (
-    compute_bucket_ema_baseline,
+    compute_bucket_baseline,
     filter_recent_weekday_samples,
     load_samples,
     predict_departure_duration,
@@ -132,7 +132,7 @@ def test_filter_recent_weekday_samples_limits_range() -> None:
     assert filtered == [recent]
 
 
-def test_compute_bucket_ema_baseline_uses_last_five_weekdays() -> None:
+def test_compute_bucket_baseline_uses_last_five_weekdays() -> None:
     base = datetime(2024, 10, 7, 8, 0, tzinfo=timezone.utc)  # Monday
     durations = [20.0, 21.0, 19.0, 18.0, 22.0, 25.0]  # Mon -> next Mon
     day_offsets = [0, 1, 2, 3, 4, 7]  # skip the weekend
@@ -146,52 +146,24 @@ def test_compute_bucket_ema_baseline_uses_last_five_weekdays() -> None:
     ]
     target_departure = base + timedelta(days=8)  # Tuesday following the last sample
 
-    baseline = compute_bucket_ema_baseline(
-        samples,
-        target_departure=target_departure,
-        max_weekdays=5,
-        bucket_minutes=5,
-        ema_span=5,
-        baseline_percentile=50,
-    )
-
-    assert baseline is not None
-    # Manually calculated EMA over last 5 weekdays (Tue->Mon with alpha=1/3)
-    assert baseline == pytest.approx(21.91, abs=0.01)
-
-    # Default P75: nearest-rank over the same five days [18, 19, 21, 22, 25].
-    assert compute_bucket_ema_baseline(samples, target_departure=target_departure) == pytest.approx(22.0)
+    # Nearest rank over the last five weekdays [18, 19, 21, 22, 25]; the first Monday drops out.
+    assert compute_bucket_baseline(samples, target_departure=target_departure) == pytest.approx(22.0)
+    assert compute_bucket_baseline(samples, target_departure=target_departure, percentile=50) == pytest.approx(21.0)
 
 
-def test_compute_bucket_ema_baseline_averages_same_day_bucket() -> None:
-    base = datetime(2024, 10, 7, 8, 0, tzinfo=timezone.utc)
-    same_day_samples = [
-        make_sample(
-            query_time=base,
-            departure_time=base,
-            duration=20.0,
-        ),
-        make_sample(
-            query_time=base + timedelta(minutes=5),
-            departure_time=base + timedelta(minutes=5),
-            duration=22.0,
-        ),
+def test_compute_bucket_baseline_window_pools_neighbouring_buckets() -> None:
+    day = datetime(2024, 10, 7, tzinfo=timezone.utc)  # Monday
+    samples = [
+        make_sample(query_time=day.replace(hour=7, minute=m), departure_time=day.replace(hour=7, minute=m), duration=d)
+        for m, d in [(40, 10.0), (45, 11.0), (50, 30.0), (55, 13.0), (59, 14.0)]
     ]
-    later_day = make_sample(
-        query_time=base + timedelta(days=1),
-        departure_time=base + timedelta(days=1),
-        duration=24.0,
-    )
-    samples = same_day_samples + [later_day]
+    target = day.replace(hour=7, minute=50) + timedelta(days=1)
 
-    baseline = compute_bucket_ema_baseline(
-        samples,
-        target_departure=base + timedelta(days=2),
-        baseline_percentile=50,
+    # Without a window only the 07:50 spike counts; ±10 minutes pools 07:40-08:00 and the median ignores it.
+    assert compute_bucket_baseline(samples, target_departure=target, percentile=50) == pytest.approx(30.0)
+    assert compute_bucket_baseline(samples, target_departure=target, percentile=50, window_minutes=10) == pytest.approx(
+        13.0
     )
-
-    # First day values should average to 21, then EMA towards 24.
-    assert baseline == pytest.approx(22.0, abs=0.01)
 
 
 def test_prune_jsonl_history_removes_records_before_cutoff(tmp_path: Path) -> None:

@@ -111,7 +111,8 @@ def get_summary(_: Auth) -> JSONResponse:
         filter_recent_weekday_samples(history, reference=now),
         day=today,
         bucket_minutes=bucket,
-        baseline_percentile=settings.baseline_percentile,
+        percentile=settings.alert_percentile,
+        window_minutes=settings.baseline_window_minutes,
     )
     today_values: dict[int, list[float]] = {}
     for sample in samples:

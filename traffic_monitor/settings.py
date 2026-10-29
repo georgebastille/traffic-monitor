@@ -20,7 +20,11 @@ def env_float(name: str, default: float) -> float:
 class Settings:
     """Tunables shared by the monitor and the API, read from the environment."""
 
-    baseline_percentile: int = 75
+    # Leave-by uses a cautious P75; change detection compares against the median, since a P75
+    # baseline made ordinary traffic read as "eased" (33 of 60 alerts in a Mar-Oct 2026 replay).
+    departure_percentile: int = 75
+    alert_percentile: int = 50
+    baseline_window_minutes: int = 10
     orange_mins: float = 2.0
     red_mins: float = 5.0
     anomaly_threshold: float = 90.0
@@ -31,7 +35,9 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            baseline_percentile=int(env_float("BASELINE_PERCENTILE", cls.baseline_percentile)),
+            departure_percentile=int(env_float("DEPARTURE_BASELINE_PERCENTILE", cls.departure_percentile)),
+            alert_percentile=int(env_float("ALERT_BASELINE_PERCENTILE", cls.alert_percentile)),
+            baseline_window_minutes=int(env_float("BASELINE_WINDOW_MINUTES", cls.baseline_window_minutes)),
             orange_mins=env_float("TRAFFIC_ORANGE_MINUTES", cls.orange_mins),
             red_mins=env_float("TRAFFIC_RED_MINUTES", cls.red_mins),
             anomaly_threshold=env_float("TRAFFIC_ANOMALY_THRESHOLD", cls.anomaly_threshold),
