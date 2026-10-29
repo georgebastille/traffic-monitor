@@ -95,24 +95,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         def notifier(notification: Notification) -> None:
             log(f"[NOTIFY] {notification.emoji} {notification.title} | {notification.body}")
 
-    if route.provider == "google":
-        api_key = os.getenv("GOOGLE_MAPS_API_KEY")
-        if not api_key:
-            raise RuntimeError("GOOGLE_MAPS_API_KEY is not set")
-        monitor = TrafficMonitor.from_google_api_key(
-            api_key,
-            timezone=route.timezone,
-            route_cache_path=route_cache,
-        )
-    else:
-        api_key = os.getenv("TOMTOM_API_KEY")
-        if not api_key:
-            raise RuntimeError("TOMTOM_API_KEY is not set")
-        monitor = TrafficMonitor(
-            TomTomClient(api_key, timezone=route.timezone, geocode_cache_path=data_dir / "geocode_cache.json"),
-            timezone=route.timezone,
-            route_cache_path=route_cache,
-        )
+    api_key = os.getenv("TOMTOM_API_KEY")
+    if not api_key:
+        raise RuntimeError("TOMTOM_API_KEY is not set")
+    monitor = TrafficMonitor(
+        TomTomClient(api_key, timezone=route.timezone, geocode_cache_path=data_dir / "geocode_cache.json"),
+        timezone=route.timezone,
+        route_cache_path=route_cache,
+    )
 
     traffic_jsonl = data_dir / f"{route.id}_traffic.jsonl"
     state_path = data_dir / f"{route.id}_state.json"

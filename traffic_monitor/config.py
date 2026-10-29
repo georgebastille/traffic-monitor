@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +14,6 @@ class RouteConfig:
     destination: str
     arrival_time: str  # "HH:MM" 24-hour
     timezone: str  # e.g. "Europe/London"
-    provider: str  # "tomtom" | "google"
     active: bool = False
 
 
@@ -38,7 +37,8 @@ class AppConfig:
             payload = json.loads(source.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return cls(routes=[])
-        routes = [RouteConfig(**r) for r in payload.get("routes", [])]
+        known = {field.name for field in fields(RouteConfig)}
+        routes = [RouteConfig(**{k: v for k, v in r.items() if k in known}) for r in payload.get("routes", [])]
         return cls(routes=routes)
 
     def save(self, path: Path | str) -> None:

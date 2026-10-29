@@ -107,7 +107,7 @@ async function loadRoutes() {
         <div class="route-info">
           <strong>${r.name}</strong>
           <small>${r.origin} → ${r.destination}</small>
-          <small>Arrive by ${r.arrival_time} · ${r.provider}</small>
+          <small>Arrive by ${r.arrival_time}</small>
         </div>
         <div class="route-actions">
           ${!r.active ? `<button onclick="activateRoute('${r.id}')">Activate</button>` : '<span class="badge">Active</span>'}
@@ -140,7 +140,6 @@ window.editRoute = (jsonStr) => {
   document.getElementById("route-destination").value = r.destination;
   document.getElementById("route-arrival").value = r.arrival_time;
   document.getElementById("route-timezone").value = r.timezone;
-  document.getElementById("route-provider").value = r.provider;
   document.getElementById("route-id").readOnly = true;
   document.getElementById("route-form-title").textContent = "Edit Route";
   document.getElementById("route-form-section").hidden = false;
@@ -168,7 +167,6 @@ document.getElementById("route-form").addEventListener("submit", async (e) => {
     destination: document.getElementById("route-destination").value.trim(),
     arrival_time: document.getElementById("route-arrival").value,
     timezone: document.getElementById("route-timezone").value.trim(),
-    provider: document.getElementById("route-provider").value,
   };
   const isEdit = document.getElementById("route-id").readOnly;
   try {

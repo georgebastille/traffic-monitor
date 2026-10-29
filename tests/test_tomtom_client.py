@@ -56,31 +56,31 @@ class FakeSession:
         )
 
 
-def test_tomtom_client_returns_google_like_shape() -> None:
-    client = TomTomClient("secret", session=FakeSession(), timezone="UTC")
+def test_tomtom_client_returns_route_result() -> None:
+    session = FakeSession()
+    client = TomTomClient("secret", session=session, timezone="UTC")
 
-    result = client.directions(
+    result = client.route(
         "Origin Address",
         "Destination Address",
-        departure_time=datetime(2024, 10, 10, 7, 0),
+        waypoints=[(51.2, -0.12)],
+        depart_at=datetime(2024, 10, 10, 7, 0),
     )
 
-    assert len(result) == 1
-    route = result[0]
-    leg = route["legs"][0]
-    assert leg["start_address"] == "Origin Address"
-    assert leg["end_address"] == "Destination Address"
-    assert leg["duration"]["value"] == pytest.approx(1500.0)
-    assert leg["duration_in_traffic"]["value"] == pytest.approx(1800.0)
-    assert route["overview_polyline"]["points"]
+    assert result.traffic_secs == pytest.approx(1800.0)
+    assert result.clear_secs == pytest.approx(1500.0)
+    assert result.points == [(51.0, -0.1), (51.1, -0.15), (51.5, -0.2)]
+    route_url, params = session._calls[-1]
+    assert "51.000000,-0.100000:51.200000,-0.120000:51.500000,-0.200000" in route_url
+    assert params["departAt"] == "2024-10-10T07:00:00"
 
 
 def test_tomtom_client_persists_geocodes(tmp_path) -> None:
     cache_path = tmp_path / "geocode_cache.json"
     first_session = FakeSession()
-    TomTomClient("secret", session=first_session, geocode_cache_path=cache_path).directions("Origin", "Destination")
+    TomTomClient("secret", session=first_session, geocode_cache_path=cache_path).route("Origin", "Destination")
     assert sum("search" in url for url, _ in first_session._calls) == 2
 
     second_session = FakeSession()
-    TomTomClient("secret", session=second_session, geocode_cache_path=cache_path).directions("Origin", "Destination")
+    TomTomClient("secret", session=second_session, geocode_cache_path=cache_path).route("Origin", "Destination")
     assert [url for url, _ in second_session._calls if "search" in url] == []

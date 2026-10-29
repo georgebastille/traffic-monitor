@@ -83,7 +83,6 @@ class RouteIn(BaseModel):
     destination: str
     arrival_time: str
     timezone: str = "Europe/London"
-    provider: str = "tomtom"
 
 
 @app.get("/api/routes")
@@ -104,12 +103,11 @@ def create_route(body: RouteIn, _: Auth) -> JSONResponse:
         destination=body.destination,
         arrival_time=body.arrival_time,
         timezone=body.timezone,
-        provider=body.provider,
         active=len(config.routes) == 0,  # auto-activate if first route
     )
     config.routes.append(new_route)
     _save_config(config)
-    return JSONResponse(asdict(new_route))
+    return JSONResponse(asdict(new_route), status_code=201)
 
 
 @app.put("/api/routes/{route_id}")
@@ -124,7 +122,6 @@ def update_route(route_id: str, body: RouteIn, _: Auth) -> JSONResponse:
                 destination=body.destination,
                 arrival_time=body.arrival_time,
                 timezone=body.timezone,
-                provider=body.provider,
                 active=route.active,
             )
             _save_config(config)

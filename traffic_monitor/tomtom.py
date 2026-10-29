@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
 import requests
-from googlemaps import convert
+
+
+@dataclass(frozen=True)
+class RouteResult:
+    traffic_secs: float
+    clear_secs: float
+    points: list[tuple[float, float]]
 
 
 class TomTomClient:
@@ -26,28 +33,25 @@ class TomTomClient:
         self._geocode_cache_path = Path(geocode_cache_path) if geocode_cache_path else None
         self._geocode_cache = self._load_geocode_cache()
 
-    def directions(
+    def route(
         self,
         origin: str,
         destination: str,
         *,
-        mode: str = "driving",
-        departure_time: object | None = None,
-        traffic_model: str | None = None,
-        alternatives: bool = False,
-        waypoints: Sequence[str] | None = None,
-    ) -> list[Mapping[str, object]]:
+        waypoints: Sequence[tuple[float, float]] = (),
+        depart_at: datetime | None = None,
+    ) -> RouteResult:
+        """Car route through ``waypoints`` (lat, lng) with live traffic."""
         origin_coords = self._geocode(origin)
         destination_coords = self._geocode(destination)
-        waypoint_coords = self._parse_waypoints(waypoints or [])
-        path = ":".join(_format_coords(coords) for coords in [origin_coords, *waypoint_coords, destination_coords])
-        depart_at = self._resolve_departure_time(departure_time)
+        path = ":".join(_format_coords(coords) for coords in [origin_coords, *waypoints, destination_coords])
+        depart = depart_at or datetime.now(self._timezone)
         params = {
             "key": self._api_key,
             "traffic": "true",
-            "travelMode": self._translate_mode(mode),
+            "travelMode": "car",
             "computeBestOrder": "false",
-            "departAt": depart_at.isoformat(timespec="seconds"),
+            "departAt": depart.isoformat(timespec="seconds"),
         }
         response = self._session.get(
             f"https://api.tomtom.com/routing/1/calculateRoute/{path}/json",
@@ -56,7 +60,7 @@ class TomTomClient:
         )
         response.raise_for_status()
         payload = response.json()
-        routes: list[Mapping[str, object]] = payload.get("routes", [])  # type: ignore[assignment]
+        routes: list[Mapping[str, Any]] = payload.get("routes", [])
         if not routes:
             raise ValueError("TomTom response missing routes")
         route = routes[0]
@@ -68,44 +72,13 @@ class TomTomClient:
         if clear_secs is None:
             delay = float(summary.get("trafficDelayInSeconds", 0.0))
             clear_secs = max(travel_secs - delay, 0.0)
-        leg = {
-            "start_address": origin,
-            "end_address": destination,
-            "duration": {"value": float(clear_secs)},
-            "duration_in_traffic": {"value": travel_secs},
-        }
-        polyline = self._encode_polyline(route.get("legs", []))
-        route_payload: dict[str, object] = {"legs": [leg]}
-        if polyline:
-            route_payload["overview_polyline"] = {"points": polyline}
-        return [route_payload]
-
-    def _translate_mode(self, mode: str) -> str:
-        if mode == "driving":
-            return "car"
-        if mode == "transit":
-            return "bus"
-        return mode
-
-    def _resolve_departure_time(self, departure_time: object | None) -> datetime:
-        if departure_time in (None, "now"):
-            return datetime.now(self._timezone)
-        if isinstance(departure_time, datetime):
-            return departure_time.astimezone(self._timezone)
-        if isinstance(departure_time, (int, float)):
-            return datetime.fromtimestamp(departure_time, tz=self._timezone)
-        raise ValueError(f"Unsupported departure_time value for TomTom client: {departure_time!r}")
-
-    def _parse_waypoints(self, waypoints: Iterable[str]) -> list[tuple[float, float]]:
-        coords: list[tuple[float, float]] = []
-        for waypoint in waypoints:
-            entry = waypoint[4:] if waypoint.startswith("via:") else waypoint
-            try:
-                lat_str, lng_str = entry.split(",", 1)
-                coords.append((float(lat_str), float(lng_str)))
-            except ValueError:
-                continue
-        return coords
+        points = [
+            (float(point["latitude"]), float(point["longitude"]))
+            for leg in route.get("legs", [])
+            for point in leg.get("points", []) or []
+            if point.get("latitude") is not None and point.get("longitude") is not None
+        ]
+        return RouteResult(traffic_secs=travel_secs, clear_secs=float(clear_secs), points=points)
 
     def _geocode(self, address: str) -> tuple[float, float]:
         if address in self._geocode_cache:
@@ -145,19 +118,6 @@ class TomTomClient:
             return {str(address): (float(lat), float(lon)) for address, (lat, lon) in payload.items()}
         except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
             return {}
-
-    def _encode_polyline(self, legs: Iterable[Mapping[str, object]]) -> str:
-        points: list[tuple[float, float]] = []
-        for leg in legs:
-            for point in leg.get("points", []) or []:
-                lat = point.get("latitude")
-                lng = point.get("longitude")
-                if lat is None or lng is None:
-                    continue
-                points.append((float(lat), float(lng)))
-        if not points:
-            return ""
-        return convert.encode_polyline(points)
 
 
 def _format_coords(coords: tuple[float, float]) -> str:

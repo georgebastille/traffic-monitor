@@ -20,7 +20,7 @@
 
 ## Testing Guidelines
 - Add `pytest` cases under `tests/`, mirroring module names (`test_main.py`, etc.).
-- Mock external services (Google Maps, ntfy) to keep tests deterministic; assert JSONL schema and anomaly calculations.
+- Mock external services (TomTom, ntfy) to keep tests deterministic; assert JSONL schema and anomaly calculations.
 - Aim to cover success, failure, and alerting paths; introduce regression tests when bugs are fixed.
 
 ## Commit & Pull Request Guidelines
@@ -30,5 +30,5 @@
 - Run linting/tests before requesting review; refresh or ignore generated artifacts consciously.
 
 ## Secrets & Configuration
-- Store credentials in an untracked `.env`; set `GOOGLE_MAPS_API_KEY` before running.
+- Store credentials in an untracked `.env`; set `TOMTOM_API_KEY` before running.
 - Update `monitor.sh` if runtime paths change and keep cron-friendly logging targeted at `cron.log`.

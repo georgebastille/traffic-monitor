@@ -53,3 +53,22 @@ def test_chart_rejects_unknown_route(data_dir: Path) -> None:
     client = TestClient(app)
     response = client.get("/api/chart/..%2Fsecrets", params={"token": "secret"})
     assert response.status_code == 404
+
+
+def test_routes_ignore_legacy_provider_field(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_TOKEN", "secret")
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer secret"}
+    body = {
+        "id": "gym",
+        "name": "Gym",
+        "origin": "A",
+        "destination": "B",
+        "arrival_time": "09:00",
+        "provider": "google",
+    }
+
+    assert client.post("/api/routes", json=body, headers=headers).status_code == 201
+    routes = client.get("/api/routes", headers=headers).json()["routes"]
+    assert [r["id"] for r in routes] == ["school-run", "gym"]
+    assert all("provider" not in r for r in routes)

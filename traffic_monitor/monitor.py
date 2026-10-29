@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Mapping, Sequence
 from zoneinfo import ZoneInfo
 
-import googlemaps
-from googlemaps import convert
+from traffic_monitor.tomtom import TomTomClient
 
 DEFAULT_WAYPOINT_COUNT = 3
 ROUTE_BASELINE_PATH = Path("traffic_route_baseline.json")
@@ -46,7 +45,7 @@ def append_sample(path: Path | str, sample: TrafficSample) -> None:
 class TrafficMonitor:
     def __init__(
         self,
-        client: Any,
+        client: TomTomClient,
         *,
         timezone: str = "Europe/London",
         via_waypoints: Sequence[tuple[float, float]] | None = None,
@@ -57,67 +56,25 @@ class TrafficMonitor:
         self._via_waypoints: list[tuple[float, float]] | None = list(via_waypoints) if via_waypoints else None
         self._route_cache_path = Path(route_cache_path)
 
-    @classmethod
-    def from_google_api_key(
-        cls,
-        api_key: str,
-        *,
-        timezone: str = "Europe/London",
-        via_waypoints: Sequence[tuple[float, float]] | None = None,
-        route_cache_path: Path | str = ROUTE_BASELINE_PATH,
-    ) -> "TrafficMonitor":
-        return cls(
-            googlemaps.Client(key=api_key),
-            timezone=timezone,
-            via_waypoints=via_waypoints,
-            route_cache_path=route_cache_path,
-        )
-
-    def get_traffic_data(
-        self,
-        origin: str,
-        destination: str,
-        *,
-        departure_time: time | str | None = None,
-    ) -> TrafficSample:
-        departure_arg, departure_dt = self._resolve_departure(departure_time)
+    def get_traffic_data(self, origin: str, destination: str) -> TrafficSample:
         waypoints = self._resolve_waypoints(origin, destination)
-        response = self._client.directions(
-            origin,
-            destination,
-            mode="driving",
-            departure_time=departure_arg,
-            traffic_model="pessimistic",
-            alternatives=False,
-            waypoints=waypoints if waypoints else None,
-        )
-        route = _first_route(response)
-        leg = _first_leg(route)
+        departure = datetime.now(self._zone)
+        result = self._client.route(origin, destination, waypoints=waypoints, depart_at=departure)
         return TrafficSample(
             query_time=datetime.now(self._zone),
-            departure_time=departure_dt,
-            origin=leg.get("start_address", origin),
-            destination=leg.get("end_address", destination),
-            clear_duration_mins=_sum_duration_minutes(route, "duration"),
-            traffic_duration_mins=_sum_duration_minutes(route, "duration_in_traffic"),
+            departure_time=departure,
+            origin=origin,
+            destination=destination,
+            clear_duration_mins=result.clear_secs / 60.0,
+            traffic_duration_mins=result.traffic_secs / 60.0,
         )
 
-    def _resolve_departure(self, departure_time: time | str | None) -> tuple[Any, datetime]:
-        if departure_time is None:
-            now = datetime.now(self._zone)
-            return "now", now
-        target = time.fromisoformat(departure_time) if isinstance(departure_time, str) else departure_time
-        now = datetime.now(self._zone)
-        today = now.replace(hour=target.hour, minute=target.minute, second=getattr(target, "second", 0), microsecond=0)
-        scheduled = today if now <= today else today + timedelta(days=1)
-        return int(scheduled.timestamp()), scheduled
-
-    def _resolve_waypoints(self, origin: str, destination: str) -> list[str]:
+    def _resolve_waypoints(self, origin: str, destination: str) -> list[tuple[float, float]]:
         if self._via_waypoints is None:
             self._via_waypoints = self._load_cached_waypoints(origin, destination) or self._compute_waypoints(
                 origin, destination
             )
-        return [f"via:{lat:.6f},{lng:.6f}" for lat, lng in self._via_waypoints]
+        return self._via_waypoints
 
     def _load_cached_waypoints(self, origin: str, destination: str) -> list[tuple[float, float]] | None:
         if not self._route_cache_path.exists():
@@ -144,18 +101,9 @@ class TrafficMonitor:
         return cleaned or None
 
     def _compute_waypoints(self, origin: str, destination: str) -> list[tuple[float, float]]:
-        response = self._client.directions(
-            origin,
-            destination,
-            mode="driving",
-            alternatives=False,
-        )
-        route = _first_route(response)
-        polyline = route.get("overview_polyline", {})
-        encoded = polyline.get("points")
-        if not encoded:
-            raise ValueError("Directions response missing overview polyline for anchor calculation")
-        points = convert.decode_polyline(encoded)
+        points = self._client.route(origin, destination).points
+        if not points:
+            raise ValueError("Route response missing points for anchor calculation")
         sampled = _sample_waypoints(points, DEFAULT_WAYPOINT_COUNT)
         record = {
             "origin": origin,
@@ -168,34 +116,8 @@ class TrafficMonitor:
         return sampled
 
 
-def _first_route(response: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
-    if not response:
-        raise ValueError("Directions response missing routes")
-    return response[0]
-
-
-def _first_leg(route: Mapping[str, Any]) -> Mapping[str, Any]:
-    legs: Sequence[Mapping[str, Any]] = route.get("legs", [])  # type: ignore[assignment]
-    if not legs:
-        raise ValueError("Directions route missing legs")
-    return legs[0]
-
-
-def _sum_duration_minutes(route: Mapping[str, Any], key: str) -> float:
-    legs: Sequence[Mapping[str, Any]] = route.get("legs", [])  # type: ignore[assignment]
-    if not legs:
-        raise ValueError("Directions route missing legs")
-    total_seconds = 0.0
-    for leg in legs:
-        payload = leg.get(key) or leg.get("duration")
-        if not payload or "value" not in payload:
-            raise ValueError(f"Directions leg missing {key}")
-        total_seconds += float(payload["value"])
-    return total_seconds / 60.0
-
-
-def _sample_waypoints(points: Iterable[Mapping[str, float]], count: int) -> list[tuple[float, float]]:
-    filtered = [(float(pt["lat"]), float(pt["lng"])) for pt in points]
+def _sample_waypoints(points: Sequence[tuple[float, float]], count: int) -> list[tuple[float, float]]:
+    filtered = list(points)
     if len(filtered) <= 2:
         return filtered[1:-1] if len(filtered) > 2 else []
     if count <= 0:

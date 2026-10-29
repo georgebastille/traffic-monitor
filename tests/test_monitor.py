@@ -1,97 +1,77 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, time, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Sequence
 
 import pytest
 
 from traffic_monitor.monitor import TrafficMonitor, TrafficSample, append_sample
 from traffic_monitor.plotting import plot_anomaly_to_png
+from traffic_monitor.tomtom import RouteResult
 
 
 class FakeClient:
-    def __init__(self, responses: List[Dict[str, Any]]) -> None:
-        self._responses = responses
+    def __init__(self, results: list[RouteResult]) -> None:
+        self._results = results
         self.calls: list[dict[str, Any]] = []
 
-    def directions(
+    def route(
         self,
         origin: str,
         destination: str,
         *,
-        mode: str,
-        alternatives: bool,
-        departure_time: Optional[Any] = None,
-        traffic_model: Optional[str] = None,
-        waypoints: Optional[List[str]] = None,
-    ) -> list[dict[str, Any]]:
+        waypoints: Sequence[tuple[float, float]] = (),
+        depart_at: datetime | None = None,
+    ) -> RouteResult:
         self.calls.append(
-            {
-                "origin": origin,
-                "destination": destination,
-                "mode": mode,
-                "departure_time": departure_time,
-                "traffic_model": traffic_model,
-                "waypoints": waypoints,
-                "alternatives": alternatives,
-            }
+            {"origin": origin, "destination": destination, "waypoints": list(waypoints), "depart_at": depart_at}
         )
-        if not self._responses:
-            raise RuntimeError("No fake responses remaining")
-        return self._responses.pop(0)
+        if not self._results:
+            raise RuntimeError("No fake results remaining")
+        return self._results.pop(0)
 
 
-def build_directions_response(
-    *,
-    clear_duration_secs: int = 600,
-    traffic_duration_secs: int = 900,
-) -> list[dict[str, object]]:
-    return [
-        {
-            "legs": [
-                {
-                    "start_address": "Origin Address",
-                    "end_address": "Destination Address",
-                    "duration": {"value": clear_duration_secs},
-                    "duration_in_traffic": {"value": traffic_duration_secs},
-                }
-            ]
-        }
-    ]
-
-
-def test_get_traffic_data_returns_typed_sample() -> None:
-    client = FakeClient([build_directions_response()])
+def test_get_traffic_data_returns_typed_sample(tmp_path: Path) -> None:
+    client = FakeClient([RouteResult(traffic_secs=900, clear_secs=600, points=[])])
     monitor = TrafficMonitor(
-        client,
-        timezone="UTC",
-        via_waypoints=[(51.0, -0.1), (51.1, -0.2)],
+        client, timezone="UTC", via_waypoints=[(51.45, -0.1)], route_cache_path=tmp_path / "r.json"
     )
 
-    sample = monitor.get_traffic_data("A", "B")
+    sample = monitor.get_traffic_data("Origin", "Destination")
 
-    assert sample.origin == "Origin Address"
-    assert sample.destination == "Destination Address"
+    assert sample.origin == "Origin"
     assert sample.clear_duration_mins == pytest.approx(10.0)
     assert sample.traffic_duration_mins == pytest.approx(15.0)
-    assert sample.query_time.tzinfo is not None
-    assert sample.departure_time.tzinfo is not None
-    assert client.calls[0]["departure_time"] == "now"
-    assert client.calls[0]["waypoints"] == ["via:51.000000,-0.100000", "via:51.100000,-0.200000"]
+    assert client.calls[0]["waypoints"] == [(51.45, -0.1)]
+    assert client.calls[0]["depart_at"] == sample.departure_time
 
 
-def test_scheduled_departure_uses_epoch_seconds() -> None:
-    client = FakeClient([build_directions_response()])
-    monitor = TrafficMonitor(client, timezone="UTC", via_waypoints=[(51.5, -0.15)])
+def test_waypoints_are_computed_and_cached(tmp_path: Path) -> None:
+    baseline_path = tmp_path / "baseline.json"
+    points = [(51.4500, -0.1000), (51.4520, -0.1050), (51.4540, -0.1100), (51.4560, -0.1150), (51.4580, -0.1200)]
+    client = FakeClient(
+        [
+            RouteResult(traffic_secs=600, clear_secs=600, points=points),
+            RouteResult(traffic_secs=900, clear_secs=600, points=[]),
+        ]
+    )
+    monitor = TrafficMonitor(client, timezone="UTC", route_cache_path=baseline_path)
 
-    sample = monitor.get_traffic_data("A", "B", departure_time=time(8, 0))
+    sample = monitor.get_traffic_data("Origin", "Destination")
 
-    departure_arg = client.calls[0]["departure_time"]
-    assert isinstance(departure_arg, int)
-    assert 0 < departure_arg < 2**31
-    assert sample.departure_time.hour == 8
+    payload = json.loads(baseline_path.read_text())
+    assert payload["origin"] == "Origin"
+    assert payload["destination"] == "Destination"
+    assert sample.traffic_duration_mins == pytest.approx(15.0)
+    assert client.calls[1]["waypoints"] == [(51.4520, -0.1050), (51.4540, -0.1100), (51.4560, -0.1150)]
+
+    # A new monitor reuses the cached waypoints without recomputing them.
+    reuse = FakeClient([RouteResult(traffic_secs=900, clear_secs=600, points=[])])
+    TrafficMonitor(reuse, timezone="UTC", route_cache_path=baseline_path).get_traffic_data("Origin", "Destination")
+    assert len(reuse.calls) == 1
+    assert reuse.calls[0]["waypoints"] == client.calls[1]["waypoints"]
 
 
 def test_append_sample_writes_json(tmp_path: Path) -> None:
@@ -189,50 +169,3 @@ def test_plotting_handles_mixed_timezone_strings(tmp_path: Path) -> None:
 
     assert result == png_path
     assert png_path.exists()
-
-
-def test_waypoints_are_computed_and_cached(tmp_path: Path) -> None:
-    from googlemaps import convert as gm_convert
-
-    baseline_path = tmp_path / "baseline.json"
-    # Polyline with 5 points
-    encoded = gm_convert.encode_polyline(
-        [
-            (51.4500, -0.1000),
-            (51.4520, -0.1050),
-            (51.4540, -0.1100),
-            (51.4560, -0.1150),
-            (51.4580, -0.1200),
-        ]
-    )
-    baseline_response = [
-        {
-            "overview_polyline": {"points": encoded},
-            "legs": [
-                {
-                    "start_address": "Origin Address",
-                    "end_address": "Destination Address",
-                    "duration": {"value": 600},
-                    "duration_in_traffic": {"value": 900},
-                }
-            ],
-        }
-    ]
-    live_response = build_directions_response()
-    client = FakeClient([baseline_response, live_response])
-    monitor = TrafficMonitor(client, timezone="UTC", route_cache_path=baseline_path)
-
-    sample = monitor.get_traffic_data("Origin", "Destination")
-
-    assert baseline_path.exists()
-    payload = json.loads(baseline_path.read_text())
-    assert payload["origin"] == "Origin"
-    assert payload["destination"] == "Destination"
-    assert sample.traffic_duration_mins == pytest.approx(15.0)
-    # First call used to build baseline (no departure time)
-    assert client.calls[0]["departure_time"] is None
-    assert client.calls[1]["waypoints"] == [
-        "via:51.452000,-0.105000",
-        "via:51.454000,-0.110000",
-        "via:51.456000,-0.115000",
-    ]
