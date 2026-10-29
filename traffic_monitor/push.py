@@ -7,6 +7,8 @@ from typing import Any, Callable
 
 from pywebpush import WebPushException, webpush
 
+from traffic_monitor.notifications import Notification
+
 
 @dataclass
 class PushSubscription:
@@ -37,14 +39,14 @@ class PushSubscription:
 
 def send_push_notification(
     subscription: PushSubscription,
-    message: str,
+    notification: Notification,
     *,
     vapid_private_key: str,
     vapid_claims: dict[str, str],
 ) -> None:
     webpush(
         subscription_info={"endpoint": subscription.endpoint, "keys": subscription.keys},
-        data=json.dumps({"title": "Traffic", "body": message}),
+        data=json.dumps({"title": f"{notification.emoji} {notification.title}", "body": notification.body}),
         vapid_private_key=vapid_private_key,
         vapid_claims=vapid_claims,
     )
@@ -54,17 +56,17 @@ def make_push_notifier(
     sub_path: Path,
     vapid_private_key: str,
     vapid_claims: dict[str, str],
-) -> Callable[[str], None]:
-    """Return a notifier callable suitable for passing to TrafficMonitor."""
+) -> Callable[[Notification], None]:
+    """Return a notifier that sends to the saved web-push subscription."""
 
-    def notify(message: str) -> None:
+    def notify(notification: Notification) -> None:
         subscription = PushSubscription.load(sub_path)
         if subscription is None:
             return
         try:
             send_push_notification(
                 subscription,
-                message,
+                notification,
                 vapid_private_key=vapid_private_key,
                 vapid_claims=vapid_claims,
             )

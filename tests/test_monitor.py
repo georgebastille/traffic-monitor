@@ -162,18 +162,6 @@ def test_plot_anomaly_to_png_creates_chart(tmp_path: Path) -> None:
     assert png_path.exists()
 
 
-def test_notify_uses_injected_sender() -> None:
-    client = FakeClient([])
-    captured: list[str] = []
-
-    def fake_sender(message: str) -> None:
-        captured.append(message)
-
-    monitor = TrafficMonitor(client, timezone="UTC", notifier=fake_sender)
-    monitor.notify("hello world")
-    assert captured == ["hello world"]
-
-
 def test_plotting_handles_mixed_timezone_strings(tmp_path: Path) -> None:
     jsonl_path = tmp_path / "mixed.jsonl"
     png_path = tmp_path / "mixed.png"

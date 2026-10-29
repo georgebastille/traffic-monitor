@@ -11,6 +11,7 @@ from typing import Any
 class NotificationState:
     departure_date: date | None = None
     departure_minutes: float | None = None
+    departure_level: str | None = None
     pattern_alert_date: date | None = None
     pattern_alert_timestamp: datetime | None = None
     anomaly_integral_high: float = 0.0
@@ -31,6 +32,7 @@ class NotificationState:
         return cls(
             departure_date=_parse_date(payload.get("departure_date")),
             departure_minutes=_parse_float(payload.get("departure_minutes")),
+            departure_level=payload.get("departure_level") or None,
             pattern_alert_date=_parse_date(payload.get("pattern_alert_date")),
             pattern_alert_timestamp=_parse_datetime(payload.get("pattern_alert_timestamp")),
             anomaly_integral_high=high if high is not None else 0.0,
@@ -46,6 +48,8 @@ class NotificationState:
             payload["departure_date"] = self.departure_date.isoformat()
         if self.departure_minutes is not None:
             payload["departure_minutes"] = self.departure_minutes
+        if self.departure_level:
+            payload["departure_level"] = self.departure_level
         if self.pattern_alert_date:
             payload["pattern_alert_date"] = self.pattern_alert_date.isoformat()
         if self.pattern_alert_timestamp:

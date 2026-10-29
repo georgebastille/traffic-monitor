@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo
 
-import requests
 from dotenv import load_dotenv
 
 from traffic_monitor import TomTomClient, TrafficMonitor, append_sample
@@ -17,7 +16,13 @@ from traffic_monitor.analytics import (
     predict_departure_duration,
 )
 from traffic_monitor.config import AppConfig
-from traffic_monitor.notifications import PatternAlertDecision, evaluate_departure_notification, evaluate_pattern_alert
+from traffic_monitor.notifications import (
+    Notification,
+    PatternAlertDecision,
+    evaluate_departure_notification,
+    evaluate_pattern_alert,
+)
+from traffic_monitor.ntfy import send_ntfy
 from traffic_monitor.push import make_push_notifier
 from traffic_monitor.state import NotificationState
 
@@ -82,13 +87,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     elif ntfy_topic:
 
-        def notifier(message: str) -> None:
-            requests.post(f"https://ntfy.sh/{ntfy_topic}", data=message.encode(), timeout=30)
+        def notifier(notification: Notification) -> None:
+            send_ntfy(ntfy_topic, notification)
 
     else:
 
-        def notifier(message: str) -> None:
-            log(f"[NOTIFY] {message}")
+        def notifier(notification: Notification) -> None:
+            log(f"[NOTIFY] {notification.emoji} {notification.title} | {notification.body}")
 
     if route.provider == "google":
         api_key = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -98,7 +103,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             api_key,
             timezone=route.timezone,
             route_cache_path=route_cache,
-            notifier=notifier,
         )
     else:
         api_key = os.getenv("TOMTOM_API_KEY")
@@ -108,7 +112,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             TomTomClient(api_key, timezone=route.timezone, geocode_cache_path=data_dir / "geocode_cache.json"),
             timezone=route.timezone,
             route_cache_path=route_cache,
-            notifier=notifier,
         )
 
     traffic_jsonl = data_dir / f"{route.id}_traffic.jsonl"
@@ -147,6 +150,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         baseline_percentile=baseline_percentile,
     )
 
+    orange_mins = _env_float("TRAFFIC_ORANGE_MINUTES", 2.0)
+    red_mins = _env_float("TRAFFIC_RED_MINUTES", 5.0)
+
     state = NotificationState.load(state_path)
     state_changed = False
 
@@ -158,13 +164,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         baseline_duration_mins=departure_baseline,
         lead_time=DEPARTURE_LEAD,
         state=state,
+        orange_mins=orange_mins,
+        red_mins=red_mins,
     )
     if departure_notice:
-        monitor.notify(departure_notice.message)
+        notifier(departure_notice.notification)
         state.departure_date = target_arrival.date()
         state.departure_minutes = departure_notice.departure_minutes
+        state.departure_level = departure_notice.notification.level
         state_changed = True
-        log("Sent departure notification")
+        log(f"Sent departure notification: {departure_notice.notification.title}")
 
     integral_threshold = _env_float("TRAFFIC_ANOMALY_THRESHOLD", 90.0)
     anomaly_deadband = _env_float("TRAFFIC_ANOMALY_DEADBAND", 2.0)
@@ -180,13 +189,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         deadband_minutes=anomaly_deadband,
         decay_minutes=anomaly_decay,
         cooldown_minutes=alert_cooldown,
+        orange_mins=orange_mins,
+        red_mins=red_mins,
     )
     if pattern_decision.state_changed:
         state_changed = True
-    if pattern_decision.message:
-        monitor.notify(pattern_decision.message)
+    if pattern_decision.notification:
+        notifier(pattern_decision.notification)
         state_changed = True
-        log("Sent pattern change notification")
+        log(f"Sent pattern change notification: {pattern_decision.notification.title}")
 
     if state_changed:
         state.save(state_path)

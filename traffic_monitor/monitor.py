@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 import googlemaps
@@ -49,13 +49,11 @@ class TrafficMonitor:
         client: Any,
         *,
         timezone: str = "Europe/London",
-        notifier: Callable[[str], None] | None = None,
         via_waypoints: Sequence[tuple[float, float]] | None = None,
         route_cache_path: Path | str = ROUTE_BASELINE_PATH,
     ) -> None:
         self._client = client
         self._zone = ZoneInfo(timezone)
-        self._notifier = notifier or (lambda msg: None)
         self._via_waypoints: list[tuple[float, float]] | None = list(via_waypoints) if via_waypoints else None
         self._route_cache_path = Path(route_cache_path)
 
@@ -103,9 +101,6 @@ class TrafficMonitor:
             clear_duration_mins=_sum_duration_minutes(route, "duration"),
             traffic_duration_mins=_sum_duration_minutes(route, "duration_in_traffic"),
         )
-
-    def notify(self, message: str) -> None:
-        self._notifier(message)
 
     def _resolve_departure(self, departure_time: time | str | None) -> tuple[Any, datetime]:
         if departure_time is None:
