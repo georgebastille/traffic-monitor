@@ -73,3 +73,14 @@ def test_tomtom_client_returns_google_like_shape() -> None:
     assert leg["duration"]["value"] == pytest.approx(1500.0)
     assert leg["duration_in_traffic"]["value"] == pytest.approx(1800.0)
     assert route["overview_polyline"]["points"]
+
+
+def test_tomtom_client_persists_geocodes(tmp_path) -> None:
+    cache_path = tmp_path / "geocode_cache.json"
+    first_session = FakeSession()
+    TomTomClient("secret", session=first_session, geocode_cache_path=cache_path).directions("Origin", "Destination")
+    assert sum("search" in url for url, _ in first_session._calls) == 2
+
+    second_session = FakeSession()
+    TomTomClient("secret", session=second_session, geocode_cache_path=cache_path).directions("Origin", "Destination")
+    assert [url for url, _ in second_session._calls if "search" in url] == []

@@ -89,7 +89,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         if not api_key:
             raise RuntimeError("TOMTOM_API_KEY is not set")
         monitor = TrafficMonitor(
-            TomTomClient(api_key, timezone=route.timezone),
+            TomTomClient(api_key, timezone=route.timezone, geocode_cache_path=data_dir / "geocode_cache.json"),
             timezone=route.timezone,
             route_cache_path=route_cache,
             notifier=notifier,
