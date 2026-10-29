@@ -69,3 +69,10 @@ def test_summary_reports_verdict_and_chart(data_dir: Path) -> None:
 
 def test_summary_requires_token(data_dir: Path) -> None:
     assert TestClient(app).get("/api/summary").status_code in {401, 403}
+
+
+def test_static_and_api_responses_must_revalidate(data_dir: Path) -> None:
+    client = TestClient(app)
+    for path in ("/", "/app.js", "/sw.js"):
+        assert client.get(path).headers["cache-control"] == "no-cache"
+    assert client.get("/api/summary", headers={"Authorization": "Bearer secret"}).headers["cache-control"] == "no-cache"

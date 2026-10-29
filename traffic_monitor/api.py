@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -27,6 +27,15 @@ from traffic_monitor.settings import Settings
 from traffic_monitor.status import assess
 
 app = FastAPI(title="Traffic Monitor")
+
+
+@app.middleware("http")
+async def revalidate_everything(request: Request, call_next):
+    """Without Cache-Control, browsers heuristically cached app.js for days and kept running the old app."""
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
 
 Auth = Annotated[None, Depends(require_token)]
 
