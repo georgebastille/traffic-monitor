@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/richie/traffic-monitor/  
+cd /home/richie/traffic/  
 UV_BIN="/home/richie/.local/bin/uv"
 
 # Run and append logs
-"$UV_BIN" run main.py >> /home/richie/traffic-monitor/cron.log 2>&1
+export DATA_DIR=/home/richie/traffic/data
+
+"$UV_BIN" run main.py >> /home/richie/traffic/cron.log 2>&1
 
