@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo
@@ -9,12 +9,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from traffic_monitor import TomTomClient, TrafficMonitor, append_sample
-from traffic_monitor.analytics import (
-    compute_bucket_ema_baseline,
-    filter_recent_weekday_samples,
-    load_samples,
-    predict_departure_duration,
-)
+from traffic_monitor.analytics import load_samples
 from traffic_monitor.config import AppConfig
 from traffic_monitor.notifications import (
     Notification,
@@ -24,40 +19,15 @@ from traffic_monitor.notifications import (
 )
 from traffic_monitor.ntfy import send_ntfy
 from traffic_monitor.push import make_push_notifier
+from traffic_monitor.settings import Settings
 from traffic_monitor.state import NotificationState
+from traffic_monitor.status import assess
 
 DEPARTURE_LEAD = timedelta(minutes=30)
 
 
 def log(message: str) -> None:
     print(f"[{datetime.now().isoformat()}] {message}")
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        log(f"Ignoring invalid {name}={raw!r}")
-        return default
-
-
-def _resolve_target_arrival(now: datetime, arrival_time: time, timezone: ZoneInfo) -> datetime:
-    target_date = now.date()
-    candidate = datetime.combine(target_date, arrival_time, tzinfo=timezone)
-    if now > candidate:
-        next_day = _next_weekday(target_date + timedelta(days=1))
-        candidate = datetime.combine(next_day, arrival_time, tzinfo=timezone)
-    return candidate
-
-
-def _next_weekday(start: date) -> date:
-    current = start
-    while current.weekday() >= 5:
-        current += timedelta(days=1)
-    return current
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -107,41 +77,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     traffic_jsonl = data_dir / f"{route.id}_traffic.jsonl"
     state_path = data_dir / f"{route.id}_state.json"
     arrival_time = time.fromisoformat(route.arrival_time)
+    settings = Settings.from_env()
 
     current_sample = monitor.get_traffic_data(route.origin, route.destination)
     append_sample(traffic_jsonl, current_sample)
     log(f"Appended sample to {traffic_jsonl}")
     now = datetime.now(timezone)
 
-    target_arrival = _resolve_target_arrival(now, arrival_time, timezone)
-
     traffic_samples = load_samples(traffic_jsonl, tzinfo=timezone)
     historical_samples = [sample for sample in traffic_samples if sample.query_time < current_sample.query_time]
-    recent_samples = filter_recent_weekday_samples(historical_samples, reference=now)
-    baseline_percentile = int(_env_float("BASELINE_PERCENTILE", 75))
-
-    baseline_duration = (
-        compute_bucket_ema_baseline(
-            recent_samples,
-            target_departure=current_sample.departure_time,
-            max_weekdays=5,
-            bucket_minutes=5,
-            ema_span=3,
-            baseline_percentile=baseline_percentile,
-        )
-        or current_sample.traffic_duration_mins
+    assessment = assess(
+        historical_samples, current_sample, now=now, arrival_time=arrival_time, zone=timezone, settings=settings
     )
-
-    predicted_duration, departure_baseline = predict_departure_duration(
-        recent_samples,
-        current_duration_mins=current_sample.traffic_duration_mins,
-        current_baseline_mins=baseline_duration,
-        target_arrival=target_arrival,
-        baseline_percentile=baseline_percentile,
-    )
-
-    orange_mins = _env_float("TRAFFIC_ORANGE_MINUTES", 2.0)
-    red_mins = _env_float("TRAFFIC_RED_MINUTES", 5.0)
 
     state = NotificationState.load(state_path)
     state_changed = False
@@ -149,38 +96,33 @@ def main(argv: Sequence[str] | None = None) -> None:
     departure_notice = evaluate_departure_notification(
         now=now,
         arrival_time=arrival_time,
-        target_arrival=target_arrival,
-        current_duration_mins=predicted_duration,
-        baseline_duration_mins=departure_baseline,
+        target_arrival=assessment.target_arrival,
+        current_duration_mins=assessment.predicted_mins,
+        baseline_duration_mins=assessment.departure_typical_mins,
         lead_time=DEPARTURE_LEAD,
         state=state,
-        orange_mins=orange_mins,
-        red_mins=red_mins,
+        orange_mins=settings.orange_mins,
+        red_mins=settings.red_mins,
     )
     if departure_notice:
         notifier(departure_notice.notification)
-        state.departure_date = target_arrival.date()
+        state.departure_date = assessment.target_arrival.date()
         state.departure_minutes = departure_notice.departure_minutes
         state.departure_level = departure_notice.notification.level
         state_changed = True
         log(f"Sent departure notification: {departure_notice.notification.title}")
 
-    integral_threshold = _env_float("TRAFFIC_ANOMALY_THRESHOLD", 90.0)
-    anomaly_deadband = _env_float("TRAFFIC_ANOMALY_DEADBAND", 2.0)
-    anomaly_decay = _env_float("TRAFFIC_ANOMALY_DECAY_MINUTES", 120.0)
-    alert_cooldown = _env_float("TRAFFIC_ALERT_COOLDOWN_MINUTES", 120.0)
-
     pattern_decision: PatternAlertDecision = evaluate_pattern_alert(
         sample_time=current_sample.query_time,
         current_duration_mins=current_sample.traffic_duration_mins,
-        baseline_duration_mins=baseline_duration,
+        baseline_duration_mins=assessment.typical_mins,
         state=state,
-        integral_threshold=integral_threshold,
-        deadband_minutes=anomaly_deadband,
-        decay_minutes=anomaly_decay,
-        cooldown_minutes=alert_cooldown,
-        orange_mins=orange_mins,
-        red_mins=red_mins,
+        integral_threshold=settings.anomaly_threshold,
+        deadband_minutes=settings.anomaly_deadband,
+        decay_minutes=settings.anomaly_decay_minutes,
+        cooldown_minutes=settings.alert_cooldown_minutes,
+        orange_mins=settings.orange_mins,
+        red_mins=settings.red_mins,
     )
     if pattern_decision.state_changed:
         state_changed = True

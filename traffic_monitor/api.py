@@ -2,25 +2,33 @@ from __future__ import annotations
 
 import json
 import os
-import threading
+import statistics
 from dataclasses import asdict
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from traffic_monitor.analytics import load_samples
+from traffic_monitor.analytics import (
+    compute_bucket_profile,
+    filter_recent_weekday_samples,
+    load_samples,
+    minutes_since_midnight,
+)
 from traffic_monitor.config import AppConfig, RouteConfig
 from traffic_monitor.dependencies import require_token
-from traffic_monitor.plotting import plot_anomaly_to_png
+from traffic_monitor.monitor import TrafficSample
+from traffic_monitor.settings import Settings
+from traffic_monitor.status import assess
 
 app = FastAPI(title="Traffic Monitor")
 
 Auth = Annotated[None, Depends(require_token)]
-_chart_lock = threading.Lock()
 
 
 def _data_dir() -> Path:
@@ -44,29 +52,92 @@ def _save_config(config: AppConfig) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Status
+# Summary: the same verdict the notifications use, plus today's chart data
 # ---------------------------------------------------------------------------
 
+DEPARTURE_WINDOW = timedelta(minutes=90)
+_samples_cache: dict[Path, tuple[float, list[TrafficSample]]] = {}
 
-@app.get("/api/status")
-def get_status(_: Auth) -> JSONResponse:
-    config = _load_config()
-    route = config.active_route
+
+def _route_samples(route: RouteConfig) -> list[TrafficSample]:
+    """Parse the hot JSONL once per change; the monitor appends every 5 minutes."""
+    path = _data_dir() / f"{route.id}_traffic.jsonl"
+    if not path.exists():
+        return []
+    mtime = path.stat().st_mtime
+    cached = _samples_cache.get(path)
+    if cached is None or cached[0] != mtime:
+        cached = (mtime, load_samples(path, tzinfo=ZoneInfo(route.timezone)))
+        _samples_cache[path] = cached
+    return cached[1]
+
+
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
+
+
+@app.get("/api/summary")
+def get_summary(_: Auth) -> JSONResponse:
+    route = _load_config().active_route
     if route is None:
         raise HTTPException(status_code=404, detail="No active route")
-    jsonl = _data_dir() / f"{route.id}_traffic.jsonl"
-    samples = load_samples(jsonl)
+    samples = _route_samples(route)
     if not samples:
         raise HTTPException(status_code=404, detail="No data yet")
-    latest = samples[-1]
+    zone = ZoneInfo(route.timezone)
+    now = datetime.now(zone)
+    current, history = samples[-1], samples[:-1]
+    settings = Settings.from_env()
+    result = assess(
+        history, current, now=now, arrival_time=time.fromisoformat(route.arrival_time), zone=zone, settings=settings
+    )
+    departure_active = (
+        result.target_arrival.date() == now.date()
+        and result.leave_by - DEPARTURE_WINDOW <= now <= result.target_arrival
+    )
+
+    today = now.date()
+    bucket = 5
+    profile = compute_bucket_profile(
+        filter_recent_weekday_samples(history, reference=now),
+        day=today,
+        bucket_minutes=bucket,
+        baseline_percentile=settings.baseline_percentile,
+    )
+    today_values: dict[int, list[float]] = {}
+    for sample in samples:
+        if sample.query_time.date() == today:
+            minute = int(minutes_since_midnight(sample.query_time) // bucket) * bucket
+            today_values.setdefault(minute, []).append(sample.traffic_duration_mins)
+    minutes = list(range(0, 24 * 60, bucket))
+
     return JSONResponse(
         {
             "route_id": route.id,
             "route_name": route.name,
-            "query_time": latest.query_time.isoformat(),
-            "traffic_duration_mins": latest.traffic_duration_mins,
-            "clear_duration_mins": latest.clear_duration_mins,
-            "delay_mins": round(latest.traffic_duration_mins - latest.clear_duration_mins, 1),
+            "sample_time": current.query_time.isoformat(),
+            "now": {
+                "mins": _round(result.current_mins),
+                "typical_mins": _round(result.typical_mins),
+                "level": result.level,
+            },
+            "departure": {
+                "active": departure_active,
+                "leave_by": result.leave_by.isoformat(),
+                "arrive_by": result.target_arrival.isoformat(),
+                "mins": _round(result.predicted_mins),
+                "typical_mins": _round(result.departure_typical_mins),
+                "level": result.departure_level,
+            },
+            "chart": {
+                "date": today.isoformat(),
+                "bucket_minutes": bucket,
+                "minutes": minutes,
+                "today": [_round(statistics.fmean(v)) if (v := today_values.get(m)) else None for m in minutes],
+                "typical": [_round(profile[m].typical) if m in profile else None for m in minutes],
+                "low": [_round(profile[m].low) if m in profile else None for m in minutes],
+                "high": [_round(profile[m].high) if m in profile else None for m in minutes],
+            },
         }
     )
 
@@ -151,31 +222,8 @@ def activate_route(route_id: str, _: Auth) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
-# Data / chart
+# History
 # ---------------------------------------------------------------------------
-
-
-@app.get("/api/chart/{route_id}")
-def get_chart(route_id: str, token: str | None = None) -> FileResponse:
-    expected = os.getenv("API_TOKEN", "")
-    if not expected:
-        raise HTTPException(status_code=500, detail="API_TOKEN not configured")
-    if token != expected:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    route = next((r for r in _load_config().routes if r.id == route_id), None)
-    if route is None:
-        raise HTTPException(status_code=404, detail=f"Route {route_id!r} not found")
-    jsonl = _data_dir() / f"{route_id}_traffic.jsonl"
-    png = _data_dir() / f"{route_id}_anomaly.png"
-    if not jsonl.exists():
-        raise HTTPException(status_code=404, detail="Chart not available yet")
-    with _chart_lock:
-        # Re-render only when new samples have arrived since the last chart.
-        if not png.exists() or png.stat().st_mtime < jsonl.stat().st_mtime:
-            tmp = png.with_suffix(".tmp.png")
-            plot_anomaly_to_png(jsonl, tmp, timezone=route.timezone)
-            os.replace(tmp, png)
-    return FileResponse(png, media_type="image/png")
 
 
 @app.get("/api/history/{route_id}")

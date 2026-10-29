@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,27 +33,6 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def test_chart_renders_on_demand_and_reuses_fresh_png(data_dir: Path) -> None:
-    client = TestClient(app)
-    png = data_dir / "school-run_anomaly.png"
-
-    response = client.get("/api/chart/school-run", params={"token": "secret"})
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "image/png"
-    assert png.exists()
-
-    os.utime(png, (png.stat().st_mtime + 60,) * 2)
-    rendered_at = png.stat().st_mtime
-    assert client.get("/api/chart/school-run", params={"token": "secret"}).status_code == 200
-    assert png.stat().st_mtime == rendered_at
-
-
-def test_chart_rejects_unknown_route(data_dir: Path) -> None:
-    client = TestClient(app)
-    response = client.get("/api/chart/..%2Fsecrets", params={"token": "secret"})
-    assert response.status_code == 404
-
-
 def test_routes_ignore_legacy_provider_field(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_TOKEN", "secret")
     client = TestClient(app)
@@ -72,3 +50,22 @@ def test_routes_ignore_legacy_provider_field(data_dir: Path, monkeypatch: pytest
     routes = client.get("/api/routes", headers=headers).json()["routes"]
     assert [r["id"] for r in routes] == ["school-run", "gym"]
     assert all("provider" not in r for r in routes)
+
+
+def test_summary_reports_verdict_and_chart(data_dir: Path) -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/summary", headers={"Authorization": "Bearer secret"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["route_id"] == "school-run"
+    assert payload["now"]["mins"] == 12.0
+    assert payload["now"]["level"] in {"green", "orange", "red"}
+    assert set(payload["departure"]) == {"active", "leave_by", "arrive_by", "mins", "typical_mins", "level"}
+    chart = payload["chart"]
+    assert len(chart["minutes"]) == len(chart["today"]) == len(chart["typical"]) == 288
+
+
+def test_summary_requires_token(data_dir: Path) -> None:
+    assert TestClient(app).get("/api/summary").status_code in {401, 403}

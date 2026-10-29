@@ -6,8 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
-    "matplotlib>=3.10.6",
-    "pandas>=2.3.3",
     "pywebpush>=2.0",
     "python-dotenv>=1.1.1",
     "requests>=2.32.5",
@@ -44,6 +42,11 @@ combine-as-imports = true
 python-version = "3.13"
 
 [dependency-groups]
+analysis = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+    "pandas>=3.1.0",
+]
 dev = [
     "ruff>=0.13.3",
     "ty>=0.0.1a21",

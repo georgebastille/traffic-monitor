@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Sequence
@@ -97,28 +98,68 @@ def compute_bucket_ema_baseline(
         raise ValueError("baseline_percentile must be between 1 and 99")
 
     bucket = _bucket_index(target_departure, bucket_minutes)
-    target_date = target_departure.date()
-    by_day: dict[date, list[float]] = {}
-    for sample in samples:
-        departure = sample.departure_time
-        if departure.weekday() >= 5:
-            continue
-        sample_date = departure.date()
-        if sample_date >= target_date:
-            continue
-        if _bucket_index(departure, bucket_minutes) != bucket:
-            continue
-        by_day.setdefault(sample_date, []).append(sample.traffic_duration_mins)
-
+    by_day = _group_weekday_buckets(samples, before=target_departure.date(), bucket_minutes=bucket_minutes).get(bucket)
     if not by_day:
         return None
-    ordered_days = sorted(by_day.keys())
-    recent_days = ordered_days[-max_weekdays:]
+    return _bucket_baseline(
+        by_day, max_weekdays=max_weekdays, ema_span=ema_span, baseline_percentile=baseline_percentile
+    )
 
+
+@dataclass(frozen=True)
+class BucketStats:
+    typical: float
+    low: float
+    high: float
+
+
+def compute_bucket_profile(
+    samples: Sequence[TrafficSample],
+    *,
+    day: date,
+    max_weekdays: int = 5,
+    bucket_minutes: int = 5,
+    ema_span: int = 3,
+    baseline_percentile: int = 75,
+) -> dict[int, BucketStats]:
+    """
+    Baseline for every time-of-day bucket of ``day``, keyed by bucket start minute.
+
+    ``typical`` is exactly what :func:`compute_bucket_ema_baseline` returns for that
+    bucket; ``low``/``high`` span the same recent weekdays' values.
+    """
+    profile: dict[int, BucketStats] = {}
+    grouped = _group_weekday_buckets(samples, before=day, bucket_minutes=bucket_minutes)
+    for bucket, by_day in grouped.items():
+        recent_days = sorted(by_day)[-max_weekdays:]
+        values = [value for recent in recent_days for value in by_day[recent]]
+        typical = _bucket_baseline(
+            by_day, max_weekdays=max_weekdays, ema_span=ema_span, baseline_percentile=baseline_percentile
+        )
+        if typical is not None:
+            profile[bucket * bucket_minutes] = BucketStats(typical=typical, low=min(values), high=max(values))
+    return profile
+
+
+def _group_weekday_buckets(
+    samples: Sequence[TrafficSample], *, before: date, bucket_minutes: int
+) -> dict[int, dict[date, list[float]]]:
+    grouped: dict[int, dict[date, list[float]]] = {}
+    for sample in samples:
+        departure = sample.departure_time
+        if departure.weekday() >= 5 or departure.date() >= before:
+            continue
+        bucket = _bucket_index(departure, bucket_minutes)
+        grouped.setdefault(bucket, {}).setdefault(departure.date(), []).append(sample.traffic_duration_mins)
+    return grouped
+
+
+def _bucket_baseline(
+    by_day: dict[date, list[float]], *, max_weekdays: int, ema_span: int, baseline_percentile: int
+) -> float | None:
+    recent_days = sorted(by_day)[-max_weekdays:]
     if baseline_percentile == 50:
-        values = [statistics.fmean(by_day[day]) for day in recent_days]
-        return _compute_ema(values, span=ema_span)
-
+        return _compute_ema([statistics.fmean(by_day[day]) for day in recent_days], span=ema_span)
     all_values = sorted(v for day in recent_days for v in by_day[day])
     if len(all_values) == 1:
         return all_values[0]
