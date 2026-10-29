@@ -12,6 +12,7 @@ from traffic_monitor.analytics import (
     compute_time_of_day_stats,
     filter_recent_weekday_samples,
     load_samples,
+    predict_departure_duration,
     prune_jsonl_history,
 )
 from traffic_monitor.monitor import TrafficSample
@@ -248,3 +249,34 @@ def test_prune_jsonl_history_removes_records_before_cutoff(tmp_path: Path) -> No
     remaining = load_samples(path, tzinfo=timezone.utc)
     assert len(remaining) == 1
     assert remaining[0].traffic_duration_mins == pytest.approx(19.0)
+
+
+def test_predict_departure_duration_shifts_by_baseline_profile() -> None:
+    # History every 5 mins: 12 mins before 07:45, 18 mins from 07:45, on the previous weekdays.
+    samples = []
+    for day in range(5, 10):  # Mon 5 Oct -> Fri 9 Oct 2026
+        for step in range(18):
+            moment = datetime(2026, 10, day, 7, 0, tzinfo=timezone.utc) + timedelta(minutes=5 * step)
+            duration = 12.0 if moment.minute < 45 and moment.hour == 7 else 18.0
+            samples.append(make_sample(query_time=moment, departure_time=moment, duration=duration))
+
+    predicted, departure_baseline = predict_departure_duration(
+        samples,
+        current_duration_mins=13.0,  # measured at 07:30, a minute slower than usual
+        current_baseline_mins=12.0,
+        target_arrival=datetime(2026, 10, 12, 8, 20, tzinfo=timezone.utc),
+    )
+
+    assert departure_baseline == pytest.approx(18.0)
+    assert predicted == pytest.approx(19.0)
+
+
+def test_predict_departure_duration_falls_back_without_history() -> None:
+    predicted, departure_baseline = predict_departure_duration(
+        [],
+        current_duration_mins=13.0,
+        current_baseline_mins=12.0,
+        target_arrival=datetime(2026, 10, 12, 8, 20, tzinfo=timezone.utc),
+    )
+
+    assert (predicted, departure_baseline) == (13.0, 12.0)

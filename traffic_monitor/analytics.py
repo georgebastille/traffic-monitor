@@ -138,6 +138,38 @@ def compute_bucket_ema_baseline(
     return all_values[max(0, min(idx, len(all_values) - 1))]
 
 
+def predict_departure_duration(
+    samples: Sequence[TrafficSample],
+    *,
+    current_duration_mins: float,
+    current_baseline_mins: float,
+    target_arrival: datetime,
+    baseline_percentile: int = 75,
+    iterations: int = 2,
+) -> tuple[float, float]:
+    """
+    Predict the trip duration at the recommended departure time.
+
+    Shifts the current duration by how much the baseline changes between now and
+    the departure bucket. Iterates because the departure time depends on the
+    predicted duration. Returns ``(predicted_mins, departure_baseline_mins)``,
+    falling back to the current values when the departure bucket has no history.
+    """
+    predicted = current_duration_mins
+    departure_baseline = current_baseline_mins
+    for _ in range(iterations):
+        baseline = compute_bucket_ema_baseline(
+            samples,
+            target_departure=target_arrival - timedelta(minutes=predicted),
+            baseline_percentile=baseline_percentile,
+        )
+        if baseline is None:
+            return current_duration_mins, current_baseline_mins
+        departure_baseline = baseline
+        predicted = current_duration_mins + baseline - current_baseline_mins
+    return predicted, departure_baseline
+
+
 def minutes_since_midnight(moment: datetime) -> float:
     midnight = moment.replace(hour=0, minute=0, second=0, microsecond=0)
     return (moment - midnight).total_seconds() / 60.0

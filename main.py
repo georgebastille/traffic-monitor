@@ -10,7 +10,12 @@ import requests
 from dotenv import load_dotenv
 
 from traffic_monitor import TomTomClient, TrafficMonitor, append_sample, plot_anomaly_to_png
-from traffic_monitor.analytics import compute_bucket_ema_baseline, filter_recent_weekday_samples, load_samples, prune_jsonl_history
+from traffic_monitor.analytics import (
+    compute_bucket_ema_baseline,
+    filter_recent_weekday_samples,
+    load_samples,
+    predict_departure_duration,
+)
 from traffic_monitor.config import AppConfig
 from traffic_monitor.notifications import PatternAlertDecision, evaluate_departure_notification, evaluate_pattern_alert
 from traffic_monitor.push import make_push_notifier
@@ -113,14 +118,25 @@ def main(argv: Sequence[str] | None = None) -> None:
         baseline_percentile = 75
         log(f"Ignoring invalid BASELINE_PERCENTILE={percentile_env!r}")
 
-    baseline_duration = compute_bucket_ema_baseline(
+    baseline_duration = (
+        compute_bucket_ema_baseline(
+            recent_samples,
+            target_departure=current_sample.departure_time,
+            max_weekdays=5,
+            bucket_minutes=5,
+            ema_span=3,
+            baseline_percentile=baseline_percentile,
+        )
+        or current_sample.traffic_duration_mins
+    )
+
+    predicted_duration, departure_baseline = predict_departure_duration(
         recent_samples,
-        target_departure=current_sample.departure_time,
-        max_weekdays=5,
-        bucket_minutes=5,
-        ema_span=3,
+        current_duration_mins=current_sample.traffic_duration_mins,
+        current_baseline_mins=baseline_duration,
+        target_arrival=target_arrival,
         baseline_percentile=baseline_percentile,
-    ) or current_sample.traffic_duration_mins
+    )
 
     state = NotificationState.load(state_path)
     state_changed = False
@@ -129,8 +145,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         now=now,
         arrival_time=arrival_time,
         target_arrival=target_arrival,
-        current_duration_mins=current_sample.traffic_duration_mins,
-        baseline_duration_mins=baseline_duration,
+        current_duration_mins=predicted_duration,
+        baseline_duration_mins=departure_baseline,
         lead_time=DEPARTURE_LEAD,
         state=state,
     )
