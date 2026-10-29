@@ -6,7 +6,6 @@ import statistics
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Sequence
-
 from zoneinfo import ZoneInfo
 
 from traffic_monitor.monitor import TrafficSample
@@ -64,18 +63,7 @@ def filter_recent_weekday_samples(
     weeks: int = 4,
 ) -> list[TrafficSample]:
     cutoff = reference - timedelta(weeks=weeks)
-    return [
-        sample
-        for sample in samples
-        if sample.query_time >= cutoff and sample.departure_time.weekday() < 5
-    ]
-
-
-def compute_baseline_duration(samples: Sequence[TrafficSample]) -> float | None:
-    durations = [sample.traffic_duration_mins for sample in samples]
-    if not durations:
-        return None
-    return statistics.median(durations)
+    return [sample for sample in samples if sample.query_time >= cutoff and sample.departure_time.weekday() < 5]
 
 
 def compute_bucket_ema_baseline(
@@ -173,26 +161,6 @@ def predict_departure_duration(
 def minutes_since_midnight(moment: datetime) -> float:
     midnight = moment.replace(hour=0, minute=0, second=0, microsecond=0)
     return (moment - midnight).total_seconds() / 60.0
-
-
-def compute_time_of_day_stats(
-    samples: Sequence[TrafficSample],
-    *,
-    target_minutes: float,
-    tolerance_minutes: float = 10.0,
-) -> tuple[float, float] | None:
-    values = [
-        sample.traffic_duration_mins
-        for sample in samples
-        if abs(minutes_since_midnight(sample.departure_time) - target_minutes) <= tolerance_minutes
-    ]
-    if len(values) < 2:
-        return None
-    mean = statistics.fmean(values)
-    stdev = statistics.pstdev(values)
-    if stdev == 0.0:
-        return None
-    return mean, stdev
 
 
 def prune_jsonl_history(

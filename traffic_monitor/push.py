@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from pywebpush import webpush, WebPushException
+from pywebpush import WebPushException, webpush
 
 
 @dataclass

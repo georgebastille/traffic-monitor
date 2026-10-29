@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 User=richie
-WorkingDirectory=/home/richie/traffic-monitor
-EnvironmentFile=/home/richie/traffic-monitor/.env
-ExecStart=/home/richie/.local/bin/uv run uvicorn traffic_monitor.api:app --host 127.0.0.1 --port 8000
+WorkingDirectory=/home/richie/traffic
+EnvironmentFile=/home/richie/traffic/.env
+ExecStart=/home/richie/.local/bin/uv run uvicorn traffic_monitor.api:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=10
 

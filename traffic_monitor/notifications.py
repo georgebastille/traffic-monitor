@@ -90,10 +90,7 @@ def evaluate_pattern_alert(
     now = sample_time
 
     # Reset integral at day boundaries so each school-run day starts clean.
-    if (
-        state.anomaly_last_timestamp is not None
-        and state.anomaly_last_timestamp.date() < sample_time.date()
-    ):
+    if state.anomaly_last_timestamp is not None and state.anomaly_last_timestamp.date() < sample_time.date():
         state.anomaly_integral_high = 0.0
         state.anomaly_integral_low = 0.0
         state_changed = True

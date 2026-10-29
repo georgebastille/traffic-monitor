@@ -13,8 +13,8 @@ class RouteConfig:
     origin: str
     destination: str
     arrival_time: str  # "HH:MM" 24-hour
-    timezone: str      # e.g. "Europe/London"
-    provider: str      # "tomtom" | "google"
+    timezone: str  # e.g. "Europe/London"
+    provider: str  # "tomtom" | "google"
     active: bool = False
 
 

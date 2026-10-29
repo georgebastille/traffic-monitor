@@ -75,22 +75,6 @@ class TrafficMonitor:
             route_cache_path=route_cache_path,
         )
 
-    @classmethod
-    def from_api_key(
-        cls,
-        api_key: str,
-        *,
-        timezone: str = "Europe/London",
-        via_waypoints: Sequence[tuple[float, float]] | None = None,
-        route_cache_path: Path | str = ROUTE_BASELINE_PATH,
-    ) -> "TrafficMonitor":
-        return cls.from_google_api_key(
-            api_key,
-            timezone=timezone,
-            via_waypoints=via_waypoints,
-            route_cache_path=route_cache_path,
-        )
-
     def get_traffic_data(
         self,
         origin: str,

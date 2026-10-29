@@ -28,6 +28,17 @@ def log(message: str) -> None:
     print(f"[{datetime.now().isoformat()}] {message}")
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        log(f"Ignoring invalid {name}={raw!r}")
+        return default
+
+
 def _resolve_target_arrival(now: datetime, arrival_time: time, timezone: ZoneInfo) -> datetime:
     target_date = now.date()
     candidate = datetime.combine(target_date, arrival_time, tzinfo=timezone)
@@ -70,9 +81,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             vapid_claims={"sub": vapid_mailto},
         )
     elif ntfy_topic:
-        notifier = lambda msg: requests.post(f"https://ntfy.sh/{ntfy_topic}", data=msg.encode())
+
+        def notifier(message: str) -> None:
+            requests.post(f"https://ntfy.sh/{ntfy_topic}", data=message.encode(), timeout=30)
+
     else:
-        notifier = lambda msg: log(f"[NOTIFY] {msg}")
+
+        def notifier(message: str) -> None:
+            log(f"[NOTIFY] {message}")
 
     if route.provider == "google":
         api_key = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -109,12 +125,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     traffic_samples = load_samples(traffic_jsonl, tzinfo=timezone)
     historical_samples = [sample for sample in traffic_samples if sample.query_time < current_sample.query_time]
     recent_samples = filter_recent_weekday_samples(historical_samples, reference=now)
-    percentile_env = os.getenv("BASELINE_PERCENTILE")
-    try:
-        baseline_percentile = int(percentile_env) if percentile_env else 75
-    except ValueError:
-        baseline_percentile = 75
-        log(f"Ignoring invalid BASELINE_PERCENTILE={percentile_env!r}")
+    baseline_percentile = int(_env_float("BASELINE_PERCENTILE", 75))
 
     baseline_duration = (
         compute_bucket_ema_baseline(
@@ -155,33 +166,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         state_changed = True
         log("Sent departure notification")
 
-    threshold_env = os.getenv("TRAFFIC_ANOMALY_THRESHOLD")
-    try:
-        integral_threshold = float(threshold_env) if threshold_env else 90.0
-    except ValueError:
-        integral_threshold = 90.0
-        log(f"Ignoring invalid TRAFFIC_ANOMALY_THRESHOLD={threshold_env!r}")
-
-    deadband_env = os.getenv("TRAFFIC_ANOMALY_DEADBAND")
-    try:
-        anomaly_deadband = float(deadband_env) if deadband_env else 2.0
-    except ValueError:
-        anomaly_deadband = 2.0
-        log(f"Ignoring invalid TRAFFIC_ANOMALY_DEADBAND={deadband_env!r}")
-
-    decay_env = os.getenv("TRAFFIC_ANOMALY_DECAY_MINUTES")
-    try:
-        anomaly_decay = float(decay_env) if decay_env else 120.0
-    except ValueError:
-        anomaly_decay = 120.0
-        log(f"Ignoring invalid TRAFFIC_ANOMALY_DECAY_MINUTES={decay_env!r}")
-
-    cooldown_env = os.getenv("TRAFFIC_ALERT_COOLDOWN_MINUTES")
-    try:
-        alert_cooldown = float(cooldown_env) if cooldown_env else 120.0
-    except ValueError:
-        alert_cooldown = 120.0
-        log(f"Ignoring invalid TRAFFIC_ALERT_COOLDOWN_MINUTES={cooldown_env!r}")
+    integral_threshold = _env_float("TRAFFIC_ANOMALY_THRESHOLD", 90.0)
+    anomaly_deadband = _env_float("TRAFFIC_ANOMALY_DEADBAND", 2.0)
+    anomaly_decay = _env_float("TRAFFIC_ANOMALY_DECAY_MINUTES", 120.0)
+    alert_cooldown = _env_float("TRAFFIC_ALERT_COOLDOWN_MINUTES", 120.0)
 
     pattern_decision: PatternAlertDecision = evaluate_pattern_alert(
         sample_time=current_sample.query_time,
