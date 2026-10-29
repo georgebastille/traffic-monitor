@@ -2,10 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#3b82f6" />
-  <title>Traffic Monitor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="color-scheme" content="dark" />
+  <title>Traffic</title>
   <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icon-192.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     [hidden] { display: none !important; }
@@ -17,184 +20,129 @@
       --text: #e2e8f0;
       --muted: #94a3b8;
       --accent: #3b82f6;
-      --good: #22c55e;
-      --warn: #f59e0b;
-      --bad: #ef4444;
+      /* status steps (dataviz reference palette), always paired with a text label */
+      --good: #0ca30c;
+      --warning: #fab219;
+      --critical: #d03b3b;
+      /* chart */
+      --series-today: #3987e5;
+      --series-typical: #c3c2b7;
+      --band: rgba(195, 194, 183, 0.16);
+      --grid: rgba(255, 255, 255, 0.07);
     }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100dvh;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      -webkit-tap-highlight-color: transparent;
     }
-
-    header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 0.4rem 1rem;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    header h1 { font-size: 0.95rem; font-weight: 600; }
 
     button {
+      font: inherit;
       background: var(--accent);
       color: #fff;
       border: none;
-      border-radius: 6px;
-      padding: 0.4rem 0.8rem;
-      font-size: 0.85rem;
+      border-radius: 8px;
+      padding: 0.55rem 0.9rem;
+      font-size: 0.9rem;
       cursor: pointer;
     }
-
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    button.danger { background: var(--bad); }
     button.secondary { background: var(--border); }
+    button.danger { background: var(--critical); }
+    button.link { background: none; color: var(--accent); padding: 0.25rem 0.4rem; }
+    button.icon { background: none; color: var(--muted); font-size: 1.3rem; padding: 0.3rem 0.5rem; line-height: 1; }
 
-    /* Token screen */
-    #token-screen {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100dvh;
-      padding: 2rem;
-      gap: 1rem;
-    }
-
-    #token-screen h2 { font-size: 1.25rem; }
-
-    #token-form { display: flex; flex-direction: column; gap: 0.75rem; width: 100%; max-width: 320px; }
-
-    input, select {
-      background: var(--surface);
+    input {
+      font: inherit;
+      background: var(--bg);
       color: var(--text);
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 0.5rem 0.75rem;
-      font-size: 0.9rem;
+      border-radius: 8px;
+      padding: 0.55rem 0.75rem;
+      font-size: 1rem;
       width: 100%;
     }
+    label { font-size: 0.8rem; color: var(--muted); }
 
-    label { font-size: 0.85rem; color: var(--muted); }
+    .content { padding: 0.75rem 1rem 2rem; max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 0.9rem; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 1rem; }
+    .muted { color: var(--muted); }
+    .error { color: var(--critical); font-size: 0.9rem; }
 
-    /* Tabs */
-    .tabs {
-      display: flex;
-      border-bottom: 1px solid var(--border);
-      background: var(--surface);
+    /* Token screen */
+    #token-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 90dvh; padding: 2rem; gap: 1rem; }
+    #token-form { display: flex; flex-direction: column; gap: 0.75rem; width: 100%; max-width: 320px; }
+
+    /* Top bar */
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 1rem 0; max-width: 560px; margin: 0 auto; }
+    .topbar h1 { font-size: 1rem; font-weight: 600; color: var(--muted); }
+
+    /* Verdict */
+    .verdict { border-left: 6px solid var(--level); display: flex; flex-direction: column; gap: 0.35rem; }
+    .verdict[data-level="green"] { --level: var(--good); }
+    .verdict[data-level="orange"] { --level: var(--warning); }
+    .verdict[data-level="red"] { --level: var(--critical); }
+    .verdict-light { display: flex; align-items: center; gap: 0.5rem; font-size: 0.95rem; font-weight: 600; }
+    .verdict-light .dot { width: 0.85rem; height: 0.85rem; border-radius: 50%; background: var(--level); flex-shrink: 0; }
+    .verdict-headline { font-size: 2.1rem; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    .verdict-detail { color: var(--muted); font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+    .verdict-next { margin-top: 0.4rem; padding-top: 0.6rem; border-top: 1px solid var(--border); font-size: 0.9rem; color: var(--muted); }
+    .verdict-next strong { color: var(--text); font-weight: 600; }
+
+    /* Chart */
+    .chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .chart-head h2 { font-size: 0.95rem; font-weight: 600; }
+    .legend { display: flex; gap: 0.8rem; font-size: 0.75rem; color: var(--muted); }
+    .legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+    .key { width: 16px; height: 0; border-top: 2px solid; display: inline-block; }
+    .key.today { border-color: var(--series-today); }
+    .key.typical { border-color: var(--series-typical); border-top-style: dashed; }
+    .key.band { height: 10px; border: none; background: var(--band); border-radius: 2px; }
+    .chart-wrap { position: relative; touch-action: pan-y; user-select: none; }
+    .chart-wrap svg { display: block; width: 100%; height: 210px; overflow: visible; }
+    .tooltip {
+      position: absolute; top: 0; pointer-events: none;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 0.4rem 0.55rem; font-size: 0.78rem; line-height: 1.45; white-space: nowrap;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); font-variant-numeric: tabular-nums;
     }
+    .tooltip .t-time { color: var(--muted); }
+    .tooltip .t-row { display: flex; align-items: center; gap: 0.35rem; }
+    .tooltip strong { font-weight: 600; }
+    details { margin-top: 0.6rem; font-size: 0.85rem; }
+    summary { color: var(--muted); cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-variant-numeric: tabular-nums; }
+    th, td { text-align: right; padding: 0.25rem 0.3rem; border-bottom: 1px solid var(--border); }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-weight: 500; }
 
-    .tab-btn {
-      flex: 1;
-      background: none;
-      color: var(--muted);
-      border: none;
-      border-radius: 0;
-      padding: 0.5rem 0.5rem;
-      font-size: 0.85rem;
-      cursor: pointer;
-    }
-
-    .tab-btn.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
-
-    /* Content */
-    .content { padding: 0.75rem; max-width: 640px; margin: 0 auto; }
-
-    /* Status */
-    .stat-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.75rem;
-      margin-bottom: 1rem;
-    }
-
-    .stat {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.75rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-    }
-
-    .stat-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-    .stat-value { font-size: 1.25rem; font-weight: 600; }
-    .good { color: var(--good); }
-    .warn { color: var(--warn); }
-    .bad { color: var(--bad); }
-
-    #chart-img { width: 100%; border-radius: 8px; margin-top: 0.5rem; border: 1px solid var(--border); }
-
-    /* Routes */
-    .route-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.75rem;
-      margin-bottom: 0.75rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 0.75rem;
-    }
-
-    .route-card.active { border-color: var(--accent); }
-
-    .route-info { display: flex; flex-direction: column; gap: 0.2rem; flex: 1; }
-    .route-info small { color: var(--muted); font-size: 0.8rem; }
-    .route-actions { display: flex; flex-direction: column; gap: 0.35rem; flex-shrink: 0; }
-
-    .badge {
-      display: inline-block;
-      background: var(--accent);
-      color: #fff;
-      border-radius: 4px;
-      padding: 0.2rem 0.5rem;
-      font-size: 0.75rem;
-      text-align: center;
-    }
-
-    /* Form */
-    .form-section {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem;
-      margin-top: 1rem;
-    }
-
-    .form-section h3 { margin-bottom: 0.75rem; font-size: 0.95rem; }
-
-    .form-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.75rem; }
-
-    .form-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+    .updated { display: flex; justify-content: center; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--muted); }
+    .updated.stale { color: var(--warning); }
 
     /* Settings */
-    .settings-section {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem;
-      margin-bottom: 0.75rem;
-    }
-
-    .settings-section h3 { font-size: 0.95rem; margin-bottom: 0.5rem; }
-
-    .error { color: var(--bad); font-size: 0.9rem; padding: 0.5rem 0; }
+    .settings-head { display: flex; align-items: center; gap: 0.5rem; }
+    .settings-head h2 { font-size: 1.05rem; }
+    .card h3 { font-size: 0.95rem; margin-bottom: 0.6rem; }
+    .route { padding: 0.6rem 0; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.2rem; }
+    .route:last-of-type { border-bottom: none; }
+    .route small { color: var(--muted); font-size: 0.8rem; }
+    .route-actions { display: flex; gap: 0.4rem; margin-top: 0.35rem; flex-wrap: wrap; }
+    .route-actions button { padding: 0.35rem 0.7rem; font-size: 0.8rem; }
+    .badge { font-size: 0.7rem; color: var(--accent); font-weight: 600; margin-left: 0.4rem; }
+    #route-form { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.8rem; }
+    .field { display: flex; flex-direction: column; gap: 0.25rem; }
+    .form-actions { display: flex; gap: 0.5rem; }
   </style>
 </head>
 <body>
 
-<!-- Token screen -->
-<div id="token-screen">
-  <h2>Traffic Monitor</h2>
+<div id="token-screen" hidden>
+  <h2>Traffic</h2>
   <form id="token-form">
-    <div class="form-field">
+    <div class="field">
       <label for="token-input">Access token</label>
       <input id="token-input" type="password" placeholder="Enter your token" autocomplete="current-password" required />
     </div>
@@ -202,76 +150,74 @@
   </form>
 </div>
 
-<!-- Main app -->
 <div id="main-app" hidden>
-  <header>
-    <h1>Traffic Monitor</h1>
-    <button id="logout-btn" class="secondary">Sign out</button>
+  <header class="topbar">
+    <h1 id="route-name">Traffic</h1>
+    <button id="settings-btn" class="icon" aria-label="Settings">⚙</button>
   </header>
 
-  <nav class="tabs">
-    <button class="tab-btn active" data-tab="status">Status</button>
-    <button class="tab-btn" data-tab="routes">Routes</button>
-    <button class="tab-btn" data-tab="settings">Settings</button>
-  </nav>
+  <main class="content" id="view-now">
+    <section class="card verdict" id="verdict" data-level="green" aria-live="polite">
+      <div class="verdict-light"><span class="dot" aria-hidden="true"></span><span id="verdict-label">Loading…</span></div>
+      <div class="verdict-headline" id="verdict-headline">–</div>
+      <div class="verdict-detail" id="verdict-detail"></div>
+      <div class="verdict-next" id="verdict-next" hidden></div>
+    </section>
 
-  <!-- Status tab -->
-  <div class="content tab-panel" id="tab-status">
-    <div style="display:flex; justify-content:flex-end; margin-bottom:0.5rem;">
-      <button id="refresh-btn" class="secondary">↻ Refresh</button>
+    <section class="card">
+      <div class="chart-head">
+        <h2>Today vs usual</h2>
+        <div class="legend">
+          <span><i class="key today"></i>Today</span>
+          <span><i class="key typical"></i>Typical</span>
+          <span><i class="key band"></i>Usual range</span>
+        </div>
+      </div>
+      <div class="chart-wrap" id="chart">
+        <svg id="chart-svg" role="img" aria-label="Travel time today compared with recent weekdays"></svg>
+        <div class="tooltip" id="tooltip" hidden></div>
+      </div>
+      <details>
+        <summary>Show as table</summary>
+        <table id="chart-table"></table>
+      </details>
+    </section>
+
+    <p class="error" id="error" hidden></p>
+    <p class="updated" id="updated-row"><span id="updated"></span><button id="refresh-btn" class="link">Refresh</button></p>
+  </main>
+
+  <main class="content" id="view-settings" hidden>
+    <div class="settings-head">
+      <button id="back-btn" class="link">‹ Back</button>
+      <h2>Settings</h2>
     </div>
-    <div id="status-panel"><p style="color:var(--muted)">Loading…</p></div>
-    <img id="chart-img" hidden alt="Baseline chart" />
-  </div>
 
-  <!-- Routes tab -->
-  <div class="content tab-panel" id="tab-routes" hidden>
-    <div id="routes-list"></div>
-    <button id="add-route-btn">+ Add route</button>
-
-    <div class="form-section" id="route-form-section" hidden>
-      <h3 id="route-form-title">Add Route</h3>
-      <form id="route-form">
-        <div class="form-field">
-          <label for="route-id">ID (slug, e.g. school-run)</label>
-          <input id="route-id" type="text" pattern="[a-z0-9\-]+" required placeholder="school-run" />
-        </div>
-        <div class="form-field">
-          <label for="route-name">Name</label>
-          <input id="route-name" type="text" required placeholder="School Run" />
-        </div>
-        <div class="form-field">
-          <label for="route-origin">Origin address</label>
-          <input id="route-origin" type="text" required placeholder="164 Devonshire Road, London SE23 3SZ" />
-        </div>
-        <div class="form-field">
-          <label for="route-destination">Destination address</label>
-          <input id="route-destination" type="text" required placeholder="Rosemead Preparatory School, London SE21 8HZ" />
-        </div>
-        <div class="form-field">
-          <label for="route-arrival">Arrive by</label>
-          <input id="route-arrival" type="time" required value="08:20" />
-        </div>
-        <div class="form-field">
-          <label for="route-timezone">Timezone</label>
-          <input id="route-timezone" type="text" required value="Europe/London" />
-        </div>
+    <section class="card">
+      <h3>Routes</h3>
+      <div id="routes-list"></div>
+      <button id="add-route-btn" class="secondary">+ Add route</button>
+      <form id="route-form" hidden>
+        <div class="field"><label for="route-id">ID (e.g. school-run)</label><input id="route-id" pattern="[a-z0-9\-]+" required /></div>
+        <div class="field"><label for="route-name-input">Name</label><input id="route-name-input" required /></div>
+        <div class="field"><label for="route-origin">From</label><input id="route-origin" required /></div>
+        <div class="field"><label for="route-destination">To</label><input id="route-destination" required /></div>
+        <div class="field"><label for="route-arrival">Arrive by</label><input id="route-arrival" type="time" required value="08:20" /></div>
+        <div class="field"><label for="route-timezone">Timezone</label><input id="route-timezone" required value="Europe/London" /></div>
         <div class="form-actions">
           <button type="submit">Save</button>
           <button type="button" id="cancel-route-btn" class="secondary">Cancel</button>
         </div>
       </form>
-    </div>
-  </div>
+    </section>
 
-  <!-- Settings tab -->
-  <div class="content tab-panel" id="tab-settings" hidden>
-    <div class="settings-section">
-      <h3>Push notifications</h3>
-      <p id="push-status" style="color:var(--muted); font-size:0.85rem; margin-bottom:0.5rem;"></p>
-      <button id="push-btn">Enable notifications</button>
-    </div>
-  </div>
+    <section class="card">
+      <h3>Notifications</h3>
+      <p class="muted">Alerts are sent to your phone and watch by ntfy.</p>
+    </section>
+
+    <button id="logout-btn" class="secondary">Sign out</button>
+  </main>
 </div>
 
 <script src="/app.js"></script>

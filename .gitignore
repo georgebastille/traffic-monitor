@@ -20,3 +20,4 @@ data/*_baseline.json
 data/*_state.json
 push_subscription.json
 data/geocode_cache.json
+!static/*.png
